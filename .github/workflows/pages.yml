@@ -41,6 +41,8 @@ jobs:
       - name: Verify production SEO metadata, canonical tags, hreflang, JSON-LD, CNAME, sitemap and llms.txt
         env:
           INDEXNOW_KEY: ${{ vars.INDEXNOW_KEY }}
+          CLARITY_ID: ${{ vars.CLARITY_ID }}
+          CF_ANALYTICS_TOKEN: ${{ vars.CF_ANALYTICS_TOKEN }}
         run: |
           npm run check
           npm run check:brand

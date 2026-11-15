@@ -336,7 +336,10 @@ if (production) {
     assert.match(doc, /property="og:image"/);
     assert.match(doc, /property="og:image:width" content="1536"/);
     if (expectedClarityId) {
-      assert.ok(doc.includes(`https://www.clarity.ms/tag/`), 'Clarity script tag injected in production when CLARITY_ID set');
+      assert.ok(
+        doc.includes('https://www.clarity.ms/tag/') && doc.includes(`"${expectedClarityId}"`),
+        `Clarity script tag with ID ${expectedClarityId} injected in production`,
+      );
     } else {
       assert.ok(!doc.includes('https://www.clarity.ms/tag/'), 'no Clarity tag injected when CLARITY_ID unset');
     }
