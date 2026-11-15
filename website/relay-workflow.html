@@ -1,0 +1,650 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#121412">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Senrelay · 续境 — 跨 Agent 对话接力与伴生记忆实战</title>
+  <meta name="description" content="详述在 Claude Code、Codex 与 Cursor 之间用 /contextcore 完成跨 Agent 全文压缩接力、短简介选号与双层记忆协同流程。">
+  <meta property="og:type" content="article">
+  <meta property="og:locale" content="zh_CN">
+  <meta property="og:site_name" content="Senrelay · 续境">
+  <meta property="og:title" content="Senrelay · 续境 — 跨 Agent 对话接力与伴生记忆实战">
+  <meta property="og:description" content="详述在 Claude Code、Codex 与 Cursor 之间用 /contextcore 完成跨 Agent 全文压缩接力、短简介选号与双层记忆协同流程。">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Senrelay · 续境 — 跨 Agent 对话接力与伴生记忆实战">
+  <meta name="twitter:description" content="限流或切换助手不断线：通过短简介选号、分页全文读取与 must_not_execute 待命保护，在 Codex、Cursor 与 Claude Code 间安全接力。">
+  <!-- deployment-metadata -->
+  <link rel="icon" href="./favicon.ico" sizes="48x48">
+  <link rel="icon" href="./assets/icon-192.png" type="image/png" sizes="192x192">
+  <link rel="apple-touch-icon" href="./assets/apple-touch-icon.png" sizes="180x180">
+  <link rel="stylesheet" href="./assets/site.css">
+  <script>document.documentElement.classList.add('has-js');</script>
+  <style>
+    .guide-page p code, .guide-page li code, .guide-page td code, .guide-page th code {
+      overflow-wrap: anywhere;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 12px;
+      padding: 1px 5px;
+      border-radius: 3px;
+      background: rgba(183, 196, 161, 0.08);
+      border: 0;
+      color: #d6e2c3;
+    }
+    .guide-page {
+      padding: 56px 0 104px;
+    }
+    .guide-header {
+      margin-bottom: 40px;
+      padding-bottom: 32px;
+      border-bottom: 1px solid var(--line);
+    }
+    .guide-header h1 {
+      font-size: clamp(28px, 3.8vw, 42px);
+      line-height: 1.24;
+      letter-spacing: -0.03em;
+      margin: 16px 0 16px;
+      color: var(--ink);
+    }
+    .guide-lead {
+      color: var(--muted);
+      font-size: 15.5px;
+      line-height: 1.82;
+      max-width: 68ch;
+    }
+    .guide-meta-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px 22px;
+      margin-top: 18px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+      color: var(--sage);
+    }
+    .callout {
+      background: transparent;
+      border: 0;
+      border-top: 1px solid var(--line-strong);
+      border-bottom: 1px solid var(--line);
+      border-radius: 0;
+      padding: 26px 0;
+      margin: 0 0 52px;
+      box-shadow: none;
+    }
+    .callout-title {
+      font-weight: 560;
+      font-size: 13px;
+      letter-spacing: 0.04em;
+      color: var(--sage);
+      margin-bottom: 16px;
+    }
+    .callout-list {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 28px;
+    }
+    .callout-list p {
+      color: var(--muted);
+      font-size: 13.5px;
+      line-height: 1.8;
+      margin: 0;
+    }
+    .callout-list p strong {
+      display: block;
+      color: var(--ink);
+      font-size: 14.5px;
+      font-weight: 560;
+      margin-bottom: 6px;
+    }
+    .guide-section {
+      margin: 56px 0;
+      padding-top: 32px;
+      border-top: 1px solid var(--line);
+    }
+    .guide-section .section-kicker {
+      display: block;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      color: var(--sage);
+      margin-bottom: 8px;
+    }
+    .guide-section h2 {
+      font-size: 23px;
+      font-weight: 560;
+      letter-spacing: -0.02em;
+      margin: 0 0 18px;
+      color: var(--ink);
+    }
+    .guide-section h3 {
+      font-size: 15.5px;
+      font-weight: 560;
+      color: #dce5ce;
+      margin: 26px 0 10px;
+    }
+    .guide-section p {
+      color: var(--muted);
+      margin-bottom: 14px;
+      font-size: 14.5px;
+      line-height: 1.82;
+      max-width: 68ch;
+    }
+    .guide-section ul, .guide-section ol {
+      margin: 12px 0 22px 20px;
+      padding: 0;
+      color: var(--muted);
+      font-size: 14.5px;
+      line-height: 1.82;
+      max-width: 68ch;
+    }
+    .guide-section li {
+      margin-bottom: 10px;
+    }
+    .guide-section li strong {
+      color: var(--ink);
+      font-weight: 560;
+    }
+    pre.code-block {
+      background: #141712;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 18px 20px;
+      overflow-x: auto;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 13px;
+      line-height: 1.65;
+      color: #dce5ce;
+      margin: 14px 0 22px;
+      box-shadow: none;
+    }
+    pre.code-block code {
+      font-family: inherit;
+      background: none;
+      border: 0;
+      padding: 0;
+    }
+    .code-comment {
+      color: #7c8770;
+    }
+    .boundary-list {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 32px 40px;
+      margin-top: 20px;
+    }
+    .boundary-card {
+      background: transparent;
+      border: 0;
+      border-top: 1px solid var(--line-soft);
+      border-radius: 0;
+      padding: 18px 0 0;
+      margin: 0;
+    }
+    .boundary-card h3 {
+      font-size: 15px;
+      font-weight: 560;
+      color: var(--sage);
+      margin: 0 0 10px;
+    }
+    .boundary-card p {
+      font-size: 13.5px;
+      color: var(--muted);
+      margin: 0;
+      line-height: 1.8;
+    }
+    .guide-faq details {
+      border-top: 1px solid var(--line-soft);
+      padding: 16px 0;
+    }
+    .guide-faq details:last-child {
+      border-bottom: 1px solid var(--line);
+    }
+    .guide-faq summary {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      cursor: pointer;
+      font-size: 14.5px;
+      font-weight: 540;
+      color: #eef3e8;
+      list-style: none;
+    }
+    .guide-faq summary::-webkit-details-marker {
+      display: none;
+    }
+    .guide-faq details p {
+      margin: 10px 0 0;
+      font-size: 13.5px;
+      line-height: 1.78;
+      color: var(--muted);
+      max-width: 66ch;
+    }
+    .lang-divider {
+      margin: 56px 0 40px;
+      border: 0;
+      border-top: 1px solid var(--line);
+    }
+    html.has-js .lang-divider {
+      display: none;
+    }
+    html.has-js[data-guide-lang="zh"] [data-guide-section="en"],
+    html.has-js[data-guide-lang="en"] [data-guide-section="zh"] {
+      display: none;
+    }
+    @media (max-width: 860px) {
+      .callout-list,
+      .boundary-list {
+        grid-template-columns: 1fr;
+        gap: 20px;
+      }
+    }
+  </style>
+</head>
+<body>
+<a class="skip" href="#main" data-zh="跳到主要内容" data-en="Skip to main content">跳到主要内容</a>
+<header class="site-header"><div class="header wrap">
+<a class="brand" href="./" aria-label="Senrelay 续境首页" data-aria-zh="Senrelay 续境首页" data-aria-en="Senrelay home"><img class="brand-symbol" src="./assets/senrelay-logo-display-v1.png" width="28" height="35" decoding="async" alt="" aria-hidden="true">Senrelay<span class="brand-cn" data-zh="· 续境" data-en="">· 续境</span></a>
+<nav aria-label="页面导航" data-aria-zh="页面导航" data-aria-en="Page navigation"><a href="./" data-zh="← 首页" data-en="← Home">← 首页</a><a href="./hosts.html" data-zh="宿主路径" data-en="Host Paths">宿主路径</a><a href="./compare.html" data-zh="方案对比" data-en="Compare">方案对比</a><a href="./guide.html" data-zh="运行指南" data-en="Setup Guide">运行指南</a></nav>
+<div class="header-tools"><div class="language-switch" role="group" aria-label="语言" data-aria-zh="语言" data-aria-en="Language"><a href="./relay-workflow.html" data-lang="zh" aria-current="page" lang="zh-CN">中</a><a href="./en/relay-workflow.html" data-lang="en" lang="en">EN</a></div><a class="header-github" href="https://github.com/qingsongcui/ContextCore" target="_blank" rel="noopener noreferrer">GitHub <span aria-hidden="true">↗</span><span class="sr-only" data-zh="（新窗口）" data-en="(opens in a new window)">（新窗口）</span></a></div>
+</div></header>
+
+<main id="main" class="wrap guide-page">
+  <div class="guide-header">
+    <div class="eyebrow"><span class="live-dot"></span> RELAY ARCHITECTURE / CLAUDE CODE · CODEX · CURSOR <span class="tiny-line"></span></div>
+    <h1 data-zh="从 Claude Code 切到 Codex / Cursor：跨 Agent 对话接力实战流程" data-en="Continue Claude Code Work in Codex or Cursor Without Losing Context">从 Claude Code 切到 Codex / Cursor：跨 Agent 对话接力实战流程</h1>
+    <p class="guide-lead" data-zh="遇到限流或想换用另一款编程助手处理测试、重构与收尾时，手工复制半截聊天记录往往漏掉报错栈与否决过的方案。本页拆解 Senrelay（续境，GitHub 仓库 qingsongcui/ContextCore）如何用短简介选号、分页原文压缩与待命保护（must_not_execute）衔接六大核心宿主。" data-en="When rate limits hit or you want another agent harness to inspect tests and refactorings, pasting ad-hoc summaries drops stack traces and rejected attempts. This workflow explains how Senrelay (GitHub repository qingsongcui/ContextCore) bridges 6 core coding agents using short-brief discovery, paged full transcripts, and stand-by safeguards.">遇到限流或想换用另一款编程助手处理测试、重构与收尾时，手工复制半截聊天记录往往漏掉报错栈与否决过的方案。本页拆解 Senrelay（续境，GitHub 仓库 qingsongcui/ContextCore）如何用短简介选号、分页原文压缩与待命保护（must_not_execute）衔接六大核心宿主。</p>
+    <div class="guide-meta-bar">
+      <span data-zh="核对日期：2026-11-15" data-en="Verified: 2026-11-15">核对日期：2026-11-15</span>
+      <span data-zh="适用范围：六大核心宿主（macOS Apple Silicon）" data-en="Scope: 6 Core Context Hosts (macOS Apple Silicon)">适用范围：六大核心宿主（macOS Apple Silicon）</span>
+      <span data-zh="免费开源：$0 · MIT License · 免登录" data-en="Open Source: $0 · MIT License · No Signup">免费开源：$0 · MIT License · 免登录</span>
+    </div>
+  </div>
+
+  <div data-guide-section="zh">
+    <div class="callout" role="note">
+      <div class="callout-title">接力过程的三道保险</div>
+      <div class="callout-list">
+        <p><strong>先列短简介，不一次爆窗</strong><code>/contextcore</code> 先列出简短编号、时间、工作区与摘要，只在选定目标会话后再拉取全文。</p>
+        <p><strong>按完整原文分页压缩</strong>新宿主通过 <code>read_conversation_messages</code> 分页读完真实用户指令与助手回复并原地压缩，不靠提前生成的粗糙摘要凑数。</p>
+        <p><strong>只报序号默认待命</strong>如果回复只有编号、没有额外执行要求，新助手触发 <code>must_not_execute=true</code>：汇总进度与阻塞后停住，等确认再改代码。</p>
+      </div>
+    </div>
+
+    <section class="guide-section" id="six-step-relay">
+      <span class="section-kicker">01 · SIX-STEP RELAY PROTOCOL</span>
+      <h2>六步接力协议：一条旧对话如何在新宿主里无缝续上</h2>
+      <p>当 Claude Code 排查到一半遇到配额限制、或者你想换到 Codex CLI / Cursor / OpenCode 继续改源码时，无需打开浏览器手工导出 Markdown。只要本机常驻服务运行在 <code>127.0.0.1:8420</code> 且双端均已接入 <code>http://127.0.0.1:8420/mcp/</code>（键名 <code>contextcore</code>，配置路径见<a class="inline-link" href="./hosts.html">15 宿主配置路径指南</a>），接力按以下六步执行：</p>
+      <ol>
+        <li><strong>在原宿主正常对话</strong>：Senrelay 对六大核心宿主（Claude Code、Codex、Cursor、Antigravity、OMP、OpenCode）采集本地对话轨迹，并由伴生工具实时推进 <code>working_tasks</code> 与带原话出处的项目记忆。</li>
+        <li><strong>在新宿主触发接力</strong>：打开 Codex CLI、Cursor 或 OMP，输入 <code>/contextcore</code>，或直接说「继续刚才的对话 / 接力」。</li>
+        <li><strong>短简介选号认会话</strong>：新助手调用 <code>list_relay_conversations</code> 返回编号列表，展示项目目录、所属 Git Worktree 分支、时间与短简介。</li>
+        <li><strong>分页读完完整原文并压缩</strong>：选定会话编号后，工具按固定分片顺序调用 <code>read_conversation_messages</code>，读尽多轮需求澄清、失败排查与工具结果边界，直接由当前模型消化压缩。</li>
+        <li><strong>Worktree 与路径消歧</strong>：若同一个仓库开启了多个 <code>git worktree</code> 并行开发，索引按实际 worktree 根路径分开归档，避免把分支 A 的上下文误塞进分支 B。</li>
+        <li><strong>受控交接进入下一步</strong>：新助手结合当前目录差异、<code>working_tasks</code> 状态与前置约束（如 <code>AGENTS.md</code> 规则），按你的回复模式决定“汇报待命”或“立刻继续执行”。</li>
+      </ol>
+    </section>
+
+    <section class="guide-section" id="modes">
+      <span class="section-kicker">02 · STAND-BY VS EXECUTION</span>
+      <h2>两种回复模式：为什么只发数字不会乱改文件</h2>
+      <p>很多人不敢用跨工具上下文接力的顾虑在于：“新模型读完记录直接动手改错方向怎么办？”Senrelay 的伴生指令对回复意图做了严格区分：</p>
+      <div class="boundary-list">
+        <div class="boundary-card">
+          <h3>模式 A · 仅输入序号（<code>must_not_execute=true</code>）</h3>
+          <p>当你只回复 <code>1</code> 或 <code>#2</code> 时，<code>relay_conversation</code> 会附上 <code>must_not_execute=true</code> 约束。新助手读完全文与当前工作区差异后，只汇报“目前改到哪一步、刚试错失败的路径、当前待确认风险”，随后停在输入栏等待拍板，绝不擅自写入文件或执行命令。</p>
+        </div>
+        <div class="boundary-card">
+          <h3>模式 B · 编号 + 明确下一步指令</h3>
+          <p>当你明确输入 <code>接 1 号会话，直接把失败的单测修通并运行检查</code> 时，新助手在加载全文与工作任务后立即沿着既有约束继续修改文件与验证。</p>
+        </div>
+      </div>
+
+      <h3>终端交互示例</h3>
+      <pre class="code-block"><code><span class="code-comment"># Step 1 · 在 Codex CLI 或 Cursor 对话框唤醒列表</span>
+你：/contextcore
+
+<span class="code-comment"># Codex 返回简短候选列表（仅占极少 Token）</span>
+[1] Claude Code · 14 分钟前 · ~/work/payment-service (worktree: fix-webhook)
+    排查 Stripe webhook 幂等键竞态，单元测试尚余 1 个超时用例
+[2] Cursor · 2 小时前 · ~/work/payment-service (worktree: main)
+    整理计费对账表索引迁移 SQL
+
+<span class="code-comment"># Step 2A · 只回复编号 → 读取全文后汇报现状并待命，不动工作区文件</span>
+你：1
+
+<span class="code-comment"># Step 2B · 也可直接附带指令 → 载入全文后继续执行目标任务</span>
+你：1，请先运行 pytest -k webhook 看最新报错再提出修改计划</code></pre>
+    </section>
+
+    <section class="guide-section" id="layering">
+      <span class="section-kicker">03 · COMPLEMENTARY LAYERS</span>
+      <h2>不重复造轮子：<code>AGENTS.md</code>、<code>MCP</code> 与会话接力怎么配合</h2>
+      <p>Senrelay 并不取代仓库里的静态规范文件，也不充当第三方托管云服务；它补齐的是团队约定与工具协议之间“正在进行中的工作台现场”：</p>
+      <div class="host-matrix-wrap">
+        <table class="host-matrix-table">
+          <caption>表 1 · 三层上下文协作分工（不重叠、不互相覆盖）</caption>
+          <thead>
+            <tr>
+              <th>工程层次</th>
+              <th>典型载体</th>
+              <th>生命周期</th>
+              <th>实际解决的问题</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <th scope="row">第一层 · 静态仓库规范</th>
+              <td>Git 仓库内 <code>AGENTS.md</code> / <code>CLAUDE.md</code></td>
+              <td>随代码库永久演进</td>
+              <td>规定构建命令、目录约定、红线禁忌与测试要求（跨 Windows/macOS/Linux 原生有效）。</td>
+            </tr>
+            <tr>
+              <th scope="row">第二层 · 工具与记忆协议</th>
+              <td><code>MCP</code> 服务器（<code>contextcore</code> 键名）</td>
+              <td>跨对话长期按需读写</td>
+              <td>把当前进行中的 <code>working_tasks</code>、带来源的教训记忆和受保护规则暴露给不同客户端。</td>
+            </tr>
+            <tr>
+              <th scope="row">第三层 · 实时跨端接力</th>
+              <td>Senrelay <code>/contextcore</code> 分页全文协议</td>
+              <td>单次切换几分钟到数小时</td>
+              <td>在 Mac 本机把原助手的报错输出、排查经过与否决方案分页移交给另一款助手。</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p>如果你想评估自己是否更适合先用 <code>AGENTS.md</code> 或云端记忆 MCP，可先读 <a class="inline-link" href="./compare.html">5 种方案对比</a>；如果你在 Windows 或 Linux 下开发，请不要安装 Senrelay，直接在当前助手收尾时让模型生成一份简明 <code>HANDOFF.md</code> 提交到临时分支即可。</p>
+    </section>
+
+    <section class="guide-section" id="limits-disambiguation">
+      <span class="section-kicker">04 · SCOPE, INSTALL &amp; ATTRIBUTION</span>
+      <h2>适用限制、安装指引与名称消歧（2026-11-15 核对）</h2>
+      <div class="boundary-list">
+        <div class="boundary-card">
+          <h3>何时不应期待接力生效</h3>
+          <p><strong>$0</strong> MIT 开源（<code>v1.0.0-beta.2</code>），仅运行在 <code>macOS 14.0+</code> Apple Silicon（<code>arm64</code>）单机回环服务上。不支持 Windows、Linux 与 Intel Mac；无云同步；9 类扩展配置宿主（Claude Desktop、Gemini CLI、OpenClaw 等）不采集对话，因此无法参与接力。</p>
+        </div>
+        <div class="boundary-card">
+          <h3>仓库与同名项目消歧 + 安装步骤</h3>
+          <p><strong>Senrelay（续境）</strong>对应的官方仓库是 <a class="inline-link" href="https://github.com/qingsongcui/ContextCore" target="_blank" rel="noopener noreferrer">qingsongcui/ContextCore</a>，请与第三方项目 <code>context-core.dev</code> 及无关的 PyPI 包 <code>contextcore</code> 区分。安装请执行 <code>brew install --cask qingsongcui/tap/senrelay</code>（手动解压后运行 <code>xattr -cr /Applications/Senrelay.app</code>）。由 <strong>Qingsong Cui（George O'Nair）</strong>（<a class="inline-link" href="https://x.com/George_ONair" target="_blank" rel="noopener noreferrer">X @George_ONair</a>）维护，详情见<a class="inline-link" href="./guide.html">运行指南</a>。</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="guide-section" id="faq">
+      <span class="section-kicker">05 · WORKFLOW FAQ</span>
+      <h2>跨 Agent 接力常见问题</h2>
+      <div class="guide-faq">
+        <details>
+          <summary>为什么接力要分页读原始对话，而不是预先生成一段“AI 摘要”？<span aria-hidden="true">+</span></summary>
+          <p>预先压缩往往丢失具体的报错行号、已经验证过不通的方案和工具调用结果。通过 <code>read_conversation_messages</code> 分页按原文顺序加载再由接盘助手当场理解，可以把细节损耗降到最低，同时靠短简介先列表避免无谓浪费上下文窗口。</p>
+        </details>
+        <details>
+          <summary>同一项目开着两个 git worktree，接力会不会把分支搞混？<span aria-hidden="true">+</span></summary>
+          <p>不会。会话索引按各自独立的 Worktree 路径与分支信息区分归档，列表短简介和接力工具会明确显示路径归属，不会将分支 A 的修改记录混入分支 B。</p>
+        </details>
+        <details>
+          <summary>只接力对话，不连接配置管理器和记忆台账可以吗？<span aria-hidden="true">+</span></summary>
+          <p>可以按需独立开启权限：读取会话、改写宿主配置与下载可选本地模型各自确认、互不捆绑。不过开启 <code>working_tasks</code> 与项目记忆能帮助接盘模型更快认清尚未完成的目标与前置规则。</p>
+        </details>
+        <details>
+          <summary>Windows 或 Linux 用户如何做跨助手交接？<span aria-hidden="true">+</span></summary>
+          <p>Senrelay 当前仅支持 Apple Silicon macOS（$0 MIT 开源），暂不支持 Windows 与 Linux。跨平台工作流建议将核心约定写入仓库根目录 <code>AGENTS.md</code>，在切换客户端前让原助手整理一份简明 <code>HANDOFF.md</code>，或参考我们的<a class="inline-link" href="./compare.html">5 种方案对比</a>。</p>
+        </details>
+      </div>
+    </section>
+  </div>
+
+  <hr class="lang-divider">
+
+  <div data-guide-section="en" lang="en">
+    <div class="callout" role="note">
+      <div class="callout-title">Three Safeguards Built Into Relay</div>
+      <div class="callout-list">
+        <p><strong>Short Briefs Before Payload</strong>Typing <code>/contextcore</code> fetches concise IDs, timestamps, and worktree summaries first—never blowing your context window upfront.</p>
+        <p><strong>Paged Full-Transcript Compaction</strong>Your receiving agent reads exact turns sequentially via <code>read_conversation_messages</code> and compacts them on the spot, keeping stack traces intact.</p>
+        <p><strong>Stand-By Lock on Numbers</strong>Replying with just a selection number enforces <code>must_not_execute=true</code>: the agent reports status and blocks until you approve next steps.</p>
+      </div>
+    </div>
+
+    <section class="guide-section" id="six-step-relay">
+      <span class="section-kicker">01 · SIX-STEP RELAY PROTOCOL</span>
+      <h2>6-Step Cross-Agent Relay Flow</h2>
+      <p>When Claude Code hits a usage cap mid-debug—or you prefer Codex CLI, Cursor, or OpenCode for final test verification—keep both clients pointed at local loopback <code>http://127.0.0.1:8420/mcp/</code> under MCP key <code>contextcore</code> (see <a class="inline-link" href="./hosts.html">Verified Config Paths Across 15 Agents</a>):</p>
+      <ol>
+        <li><strong>Work Normally in Host A</strong>: Senrelay indexes local transcripts across the 6 core hosts (Claude Code, Codex, Cursor, Antigravity, OMP, OpenCode) while tracking <code>working_tasks</code> and source-linked memories.</li>
+        <li><strong>Invoke Relay in Host B</strong>: Open Codex, Cursor, OMP, or OpenCode and enter <code>/contextcore</code> (or say "Relay").</li>
+        <li><strong>Pick From Short Briefs</strong>: <code>list_relay_conversations</code> returns numbered sessions with project path, Git worktree branch, recency, and concise summary.</li>
+        <li><strong>Page Complete Transcript Turns</strong>: Once selected, <code>read_conversation_messages</code> iterates page by page through complete original messages and tool results so the new model compacts live truth directly.</li>
+        <li><strong>Disambiguate Git Worktrees</strong>: Sessions stay partitioned by exact worktree path so concurrent branches inside one repository never bleed into each other.</li>
+        <li><strong>Controlled Hand-Over</strong>: Combining workspace diffs, active <code>working_tasks</code>, and pinned constraints, Host B waits for approval on number-only replies or proceeds when a task accompanies your choice.</li>
+      </ol>
+    </section>
+
+    <section class="guide-section" id="modes">
+      <span class="section-kicker">02 · STAND-BY VS EXECUTION</span>
+      <h2>Why Replying With a Number Won't Touch Files Yet</h2>
+      <p>Developers hesitate to hand active edits to a second model when they worry it will rush ahead and break files. Senrelay separates inspection from execution via two explicit reply modes:</p>
+      <div class="boundary-list">
+        <div class="boundary-card">
+          <h3>Mode A · Number-Only Selection (<code>must_not_execute=true</code>)</h3>
+          <p>Sending just <code>1</code> passes <code>must_not_execute=true</code> to <code>relay_conversation</code>. The receiving client summarizes verified changes, failed hypotheses, and pending steps, then pauses cleanly without editing files or running destructive shell commands.</p>
+        </div>
+        <div class="boundary-card">
+          <h3>Mode B · Number + Action Instruction</h3>
+          <p>Sending <code>1 - fix the failing webhook test and run pytest</code> tells the receiving agent to load full context plus <code>working_tasks</code> and immediately pick up execution.</p>
+        </div>
+      </div>
+
+      <h3>Sample Terminal Sequence</h3>
+      <pre class="code-block"><code><span class="code-comment"># Step 1 · Trigger short-brief listing inside Codex CLI or Cursor</span>
+You: /contextcore
+
+<span class="code-comment"># Compact numbered list keeps initial token cost tiny</span>
+[1] Claude Code · 14m ago · ~/work/payment-service (worktree: fix-webhook)
+    Debugging Stripe webhook idempotency race; 1 timeout test left
+[2] Cursor · 2h ago · ~/work/payment-service (worktree: main)
+    Drafting billing reconciliation index migration SQL
+
+<span class="code-comment"># Step 2A · Number only -&gt; inspects transcript, reports status, stands by</span>
+You: 1
+
+<span class="code-comment"># Step 2B · Number + explicit task -&gt; continues editing and verifying</span>
+You: 1, run pytest -k webhook first and propose the minimal fix</code></pre>
+    </section>
+
+    <section class="guide-section" id="layering">
+      <span class="section-kicker">03 · COMPLEMENTARY LAYERS</span>
+      <h2>How <code>AGENTS.md</code>, <code>MCP</code>, and Session Relay Fit Together</h2>
+      <p>Senrelay complements repository convention files and MCP servers rather than duplicating them—covering the live mid-task layer between static rules and external tools:</p>
+      <div class="host-matrix-wrap">
+        <table class="host-matrix-table">
+          <caption>Table 1 · Three Non-Overlapping Context Layers</caption>
+          <thead>
+            <tr>
+              <th>Layer</th>
+              <th>Primary Artifact</th>
+              <th>Lifespan</th>
+              <th>Problem It Solves</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <th scope="row">Layer 1 · Static Repo Rules</th>
+              <td>Git-committed <code>AGENTS.md</code> / <code>CLAUDE.md</code></td>
+              <td>Repository-wide across OSes</td>
+              <td>Codifies build steps, style guardrails, and PR test commands on Windows, macOS, and Linux ($0).</td>
+            </tr>
+            <tr>
+              <th scope="row">Layer 2 · Tools &amp; Shared Memory</th>
+              <td>Local <code>contextcore</code> <code>/mcp/</code> endpoints</td>
+              <td>Cross-session workspace state</td>
+              <td>Maintains <code>working_tasks</code>, provenance-linked project memories, and safe budget-checked rules.</td>
+            </tr>
+            <tr>
+              <th scope="row">Layer 3 · Mid-Task Relay</th>
+              <td><code>/contextcore</code> paged full-transcript flow</td>
+              <td>Single live task handoff</td>
+              <td>Transfers failed experiments, tracebacks, and file decisions between 6 Mac hosts without manual copy-paste.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Not sure whether <code>AGENTS.md</code>, cloud memory MCP, or local relay fits best? Compare options honestly in our <a class="inline-link" href="./compare.html">5-way decision guide</a>. On Windows or Linux, skip Senrelay and ask your outgoing client for a concise <code>HANDOFF.md</code>.</p>
+    </section>
+
+    <section class="guide-section" id="limits-disambiguation">
+      <span class="section-kicker">04 · SCOPE, INSTALL &amp; ATTRIBUTION</span>
+      <h2>Platform Limits, Install &amp; Identity (Checked 2026-11-15)</h2>
+      <div class="boundary-list">
+        <div class="boundary-card">
+          <h3>When Senrelay Is the Wrong Tool</h3>
+          <p><strong>$0</strong> under the MIT License (<code>v1.0.0-beta.2</code>), restricted strictly to single-machine <code>macOS 14.0+</code> on Apple Silicon (<code>arm64</code>). Not for Windows, Linux, Intel Macs, cloud multi-device sync, or transcript relay on the 9 extended config-only hosts.</p>
+        </div>
+        <div class="boundary-card">
+          <h3>Disambiguation &amp; Setup</h3>
+          <p><strong>Senrelay</strong> (<a class="inline-link" href="https://github.com/qingsongcui/ContextCore" target="_blank" rel="noopener noreferrer">github.com/qingsongcui/ContextCore</a>) is unrelated to <code>context-core.dev</code> and the PyPI <code>contextcore</code> package. Install on Mac via <code>brew install --cask qingsongcui/tap/senrelay</code> and clear Beta quarantine with <code>xattr -cr /Applications/Senrelay.app</code>. Built by <strong>Qingsong Cui (George O'Nair)</strong> (<a class="inline-link" href="https://x.com/George_ONair" target="_blank" rel="noopener noreferrer">X @George_ONair</a>)—see the <a class="inline-link" href="./guide.html">Setup Guide</a>.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="guide-section" id="faq">
+      <span class="section-kicker">05 · WORKFLOW FAQ</span>
+      <h2>Relay Workflow FAQ</h2>
+      <div class="guide-faq">
+        <details>
+          <summary>Why page original transcripts instead of pre-summarizing every turn?<span aria-hidden="true">+</span></summary>
+          <p>Background summaries routinely strip exact error lines, file diffs, and failed hypotheses. Reading bounded pages of raw turns via <code>read_conversation_messages</code> lets the receiving model compress details tailored to its next task.</p>
+        </details>
+        <details>
+          <summary>How does relay avoid mixing parallel git worktrees in the same repository?<span aria-hidden="true">+</span></summary>
+          <p>Sessions stay indexed by exact working directory and worktree path. Both short-brief listings and relay tool inputs surface the worktree path explicitly before loading turns.</p>
+        </details>
+        <details>
+          <summary>Can I use /contextcore relay without letting Senrelay write all host configs?<span aria-hidden="true">+</span></summary>
+          <p>Yes—session reading, host file modifications, and local model downloads ask for separate confirmations. Pairing relay with <code>working_tasks</code> and source-linked memories keeps long tasks organized, but remains opt-in.</p>
+        </details>
+        <details>
+          <summary>What should Windows or Linux developers use instead of Senrelay?<span aria-hidden="true">+</span></summary>
+          <p>Senrelay is currently $0 MIT open source for Apple Silicon macOS only. Cross-platform teams should use Git-tracked <code>AGENTS.md</code> plus a short <code>HANDOFF.md</code> generated before switching agents, or review all 5 options in our <a class="inline-link" href="./compare.html">comparison guide</a>.</p>
+        </details>
+      </div>
+    </section>
+  </div>
+</main>
+
+<footer class="footer wrap">
+<a class="brand" href="./" aria-label="Senrelay 续境首页" data-aria-zh="Senrelay 续境首页" data-aria-en="Senrelay home"><img class="brand-symbol" src="./assets/senrelay-logo-display-v1.png" width="26" height="33" loading="lazy" decoding="async" alt="" aria-hidden="true">Senrelay<span class="brand-cn" data-zh="· 续境" data-en="">· 续境</span></a>
+<p>New agent. Same thread.</p>
+<div>
+  <a href="./" data-zh="首页" data-en="Home">首页</a>
+  <a href="./hosts.html" data-zh="宿主路径" data-en="Host Paths">宿主路径</a>
+  <a href="./compare.html" data-zh="方案对比" data-en="Compare">方案对比</a>
+  <a href="./guide.html" data-zh="运行指南" data-en="Setup Guide">运行指南</a>
+  <a href="https://github.com/qingsongcui/ContextCore" target="_blank" rel="noopener noreferrer">GitHub ↗<span class="sr-only" data-zh="（新窗口）" data-en="(opens in a new window)">（新窗口）</span></a>
+  <a href="https://github.com/qingsongcui/ContextCore/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">MIT License<span class="sr-only" data-zh="（新窗口）" data-en="(opens in a new window)">（新窗口）</span></a>
+  <a href="#main" data-zh="回到顶部 ↑" data-en="Back to top ↑">回到顶部 ↑</a>
+</div>
+</footer>
+<script type="module">
+  const LANG_KEY = 'senrelay.website.language';
+  const root = document.documentElement;
+  const docDefaultLang = (root.getAttribute('lang') || '').toLowerCase().startsWith('en') ? 'en' : 'zh';
+  const hasBothSections = Boolean(document.querySelector('[data-guide-section="zh"]') && document.querySelector('[data-guide-section="en"]'));
+  const zhTitle = document.title;
+  const brandPrefix = zhTitle.split('—')[0].trim().replace(/\s*·\s*.*$/, '') || 'Senrelay';
+  const enTitle = `${brandPrefix} — Cross-Agent Relay Workflow: Claude to Codex`;
+  const metaDesc = document.querySelector('meta[name="description"]');
+  const zhDesc = metaDesc ? metaDesc.getAttribute('content') : '';
+  const enDesc = 'Step-by-step guide to continuing Claude Code tasks in Codex or Cursor with Senrelay: short briefs, paged /contextcore relay, and working memory.';
+
+  function detectLanguage() {
+    const override = new URLSearchParams(window.location.search).get('lang');
+    if (override === 'zh' || override === 'en') return override;
+    if (!hasBothSections) return docDefaultLang;
+    try {
+      const stored = window.localStorage.getItem(LANG_KEY);
+      if (stored === 'zh' || stored === 'en') return stored;
+    } catch { /* Storage is optional. */ }
+    return docDefaultLang;
+  }
+
+  let language = detectLanguage();
+
+  function syncGuideControls(lang) {
+    document.querySelectorAll('[data-lang]').forEach(ctrl => {
+      const active = ctrl.dataset.lang === lang;
+      if (ctrl.hasAttribute('href') || ctrl.tagName === 'A') {
+        if (active) ctrl.setAttribute('aria-current', 'page');
+        else ctrl.removeAttribute('aria-current');
+      }
+      if (ctrl.hasAttribute('aria-pressed') || ctrl.tagName === 'BUTTON') {
+        ctrl.setAttribute('aria-pressed', String(active));
+      }
+    });
+    const group = document.querySelector('.language-switch');
+    if (group) group.setAttribute('aria-label', lang === 'en' ? 'Language' : '语言');
+  }
+
+  function applyGuideLanguage(lang) {
+    if (hasBothSections) {
+      root.lang = lang === 'en' ? 'en' : 'zh-CN';
+      root.dataset.guideLang = lang;
+      document.title = lang === 'en' ? enTitle : zhTitle;
+      if (metaDesc) metaDesc.setAttribute('content', lang === 'en' ? enDesc : zhDesc);
+      document.querySelectorAll('[data-guide-section]').forEach(section => {
+        section.hidden = section.dataset.guideSection !== lang;
+      });
+      document.querySelectorAll('[data-zh][data-en]').forEach(el => {
+        el.textContent = lang === 'en' ? el.dataset.en : el.dataset.zh;
+      });
+      document.querySelectorAll('[data-aria-zh][data-aria-en]').forEach(el => {
+        el.setAttribute('aria-label', lang === 'en' ? el.dataset.ariaEn : el.dataset.ariaZh);
+      });
+    } else {
+      root.dataset.guideLang = docDefaultLang;
+    }
+    syncGuideControls(hasBothSections ? lang : docDefaultLang);
+  }
+
+  function setGuideLanguage(next) {
+    if ((next !== 'zh' && next !== 'en') || next === language) return;
+    language = next;
+    try { window.localStorage.setItem(LANG_KEY, next); } catch { /* Storage is optional. */ }
+    try {
+      const url = new URL(window.location.href);
+      if (url.searchParams.has('lang')) {
+        url.searchParams.delete('lang');
+        window.history.replaceState(null, '', url);
+      }
+    } catch { /* ignore */ }
+    applyGuideLanguage(next);
+  }
+
+  root.classList.add('has-js');
+  if (!hasBothSections && language !== docDefaultLang) {
+    const targetCtrl = document.querySelector(`[data-lang="${language}"]`);
+    const targetHref = targetCtrl && targetCtrl.getAttribute('href');
+    if (targetHref) window.location.replace(targetHref);
+  }
+  document.querySelectorAll('[data-lang]').forEach(ctrl => {
+    ctrl.addEventListener('click', event => {
+      const next = ctrl.dataset.lang;
+      if (next !== 'zh' && next !== 'en') return;
+      try { window.localStorage.setItem(LANG_KEY, next); } catch { /* Storage is optional. */ }
+      if (!hasBothSections) {
+        if (next === docDefaultLang) event.preventDefault();
+        return;
+      }
+      if (!event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
+        event.preventDefault();
+        setGuideLanguage(next);
+      }
+    });
+  });
+  applyGuideLanguage(language);
+</script>
+</body>
+</html>

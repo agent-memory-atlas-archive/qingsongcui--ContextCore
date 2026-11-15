@@ -10,24 +10,30 @@ const guide = await readFile(path.join(root, 'guide.html'), 'utf8');
 const enGuide = await readFile(path.join(root, 'en/guide.html'), 'utf8');
 const compare = await readFile(path.join(root, 'compare.html'), 'utf8');
 const enCompare = await readFile(path.join(root, 'en/compare.html'), 'utf8');
+const hosts = await readFile(path.join(root, 'hosts.html'), 'utf8');
+const enHosts = await readFile(path.join(root, 'en/hosts.html'), 'utf8');
+const relay = await readFile(path.join(root, 'relay-workflow.html'), 'utf8');
+const enRelay = await readFile(path.join(root, 'en/relay-workflow.html'), 'utf8');
 const notFound = await readFile(path.join(root, '404.html'), 'utf8');
 const llms = await readFile(path.join(root, 'llms.txt'), 'utf8');
 const llmsFull = await readFile(path.join(root, 'llms-full.txt'), 'utf8');
 
-assert.equal((html.match(/<h1\b/g) || []).length, 1, 'exactly one h1 in index.html');
-assert.equal((enHtml.match(/<h1\b/g) || []).length, 1, 'exactly one h1 in en/index.html');
-assert.equal((guide.match(/<h1\b/g) || []).length, 1, 'exactly one h1 in guide.html');
-assert.equal((enGuide.match(/<h1\b/g) || []).length, 1, 'exactly one h1 in en/guide.html');
-assert.equal((compare.match(/<h1\b/g) || []).length, 1, 'exactly one h1 in compare.html');
-assert.equal((enCompare.match(/<h1\b/g) || []).length, 1, 'exactly one h1 in en/compare.html');
+for (const [label, doc, expectedLangAttr] of [
+  ['index.html', html, '<html lang="zh-CN">'],
+  ['en/index.html', enHtml, '<html lang="en" data-static-locale="en">'],
+  ['guide.html', guide, '<html lang="zh-CN">'],
+  ['en/guide.html', enGuide, '<html lang="en">'],
+  ['compare.html', compare, '<html lang="zh-CN">'],
+  ['en/compare.html', enCompare, '<html lang="en">'],
+  ['hosts.html', hosts, '<html lang="zh-CN">'],
+  ['en/hosts.html', enHosts, '<html lang="en">'],
+  ['relay-workflow.html', relay, '<html lang="zh-CN">'],
+  ['en/relay-workflow.html', enRelay, '<html lang="en">'],
+]) {
+  assert.equal((doc.match(/<h1\b/g) || []).length, 1, `exactly one h1 in ${label}`);
+  assert.ok(doc.includes(expectedLangAttr), `expected lang attribute in ${label}`);
+}
 assert.equal((notFound.match(/<h1\b/g) || []).length, 1, 'exactly one h1 in 404.html');
-
-assert.match(html, /<html lang="zh-CN">/);
-assert.match(enHtml, /<html lang="en" data-static-locale="en">/);
-assert.match(guide, /<html lang="zh-CN">/);
-assert.match(enGuide, /<html lang="en">/);
-assert.match(compare, /<html lang="zh-CN">/);
-assert.match(enCompare, /<html lang="en">/);
 assert.match(html, /<meta name="theme-color" content="#121412">/);
 assert.match(notFound, /<meta name="theme-color" content="#121412">/);
 assert.match(notFound, /<meta name="robots" content="noindex">/);
@@ -48,6 +54,10 @@ for (const [label, doc] of [
   ['en/guide.html', enGuide],
   ['compare.html', compare],
   ['en/compare.html', enCompare],
+  ['hosts.html', hosts],
+  ['en/hosts.html', enHosts],
+  ['relay-workflow.html', relay],
+  ['en/relay-workflow.html', enRelay],
 ]) {
   const ids = [...doc.matchAll(/\bid="([^"]+)"/g)].map((m) => m[1]);
   assert.equal(ids.length, new Set(ids).size, `IDs unique in ${label}`);
@@ -59,7 +69,7 @@ for (const [label, doc] of [
   }
 }
 
-for (const [pageLabel, pageDoc] of [['index.html', html], ['guide.html', guide], ['compare.html', compare]]) {
+for (const [pageLabel, pageDoc] of [['index.html', html], ['guide.html', guide], ['compare.html', compare], ['hosts.html', hosts], ['relay-workflow.html', relay]]) {
   for (const [, asset] of pageDoc.matchAll(/(?:href|src)="\.\/([^"\s]*)"/g)) {
     const [relPath, hash] = asset.split('#');
     const targetPath = path.join(root, relPath || 'index.html');
@@ -70,7 +80,7 @@ for (const [pageLabel, pageDoc] of [['index.html', html], ['guide.html', guide],
     }
   }
 }
-for (const [pageLabel, pageDoc] of [['en/index.html', enHtml], ['en/guide.html', enGuide], ['en/compare.html', enCompare]]) {
+for (const [pageLabel, pageDoc] of [['en/index.html', enHtml], ['en/guide.html', enGuide], ['en/compare.html', enCompare], ['en/hosts.html', enHosts], ['en/relay-workflow.html', enRelay]]) {
   for (const [, asset] of pageDoc.matchAll(/(?:href|src)="(\.\.?\/[^"\s]*)"/g)) {
     const [relPath, hash] = asset.split('#');
     let resolved = path.resolve(root, 'en', relPath || 'index.html');
@@ -104,6 +114,10 @@ await access(path.join(root, 'guide.html'));
 await access(path.join(root, 'en/guide.html'));
 await access(path.join(root, 'compare.html'));
 await access(path.join(root, 'en/compare.html'));
+await access(path.join(root, 'hosts.html'));
+await access(path.join(root, 'en/hosts.html'));
+await access(path.join(root, 'relay-workflow.html'));
+await access(path.join(root, 'en/relay-workflow.html'));
 await access(path.join(root, '404.html'));
 await access(path.join(root, 'llms.txt'));
 await access(path.join(root, 'llms-full.txt'));
@@ -117,14 +131,17 @@ for (const doc of [guide, enGuide]) {
   }
 }
 
-assert.ok(!/<div\b[^>]*\bdata-guide-section="en"/.test(guide), 'Chinese guide strips hidden English section');
-assert.ok(!/<hr\b[^>]*\bclass="lang-divider"/.test(guide), 'Chinese guide strips lang-divider');
-assert.ok(!/<div\b[^>]*\bdata-guide-section="zh"/.test(enGuide), 'English guide strips hidden Chinese section');
-assert.ok(!/<hr\b[^>]*\bclass="lang-divider"/.test(enGuide), 'English guide strips lang-divider');
-assert.ok(!/<div\b[^>]*\bdata-guide-section="en"/.test(compare), 'Chinese compare strips hidden English section');
-assert.ok(!/<hr\b[^>]*\bclass="lang-divider"/.test(compare), 'Chinese compare strips lang-divider');
-assert.ok(!/<div\b[^>]*\bdata-guide-section="zh"/.test(enCompare), 'English compare strips hidden Chinese section');
-assert.ok(!/<hr\b[^>]*\bclass="lang-divider"/.test(enCompare), 'English compare strips lang-divider');
+for (const [label, zhDoc, enDoc] of [
+  ['guide', guide, enGuide],
+  ['compare', compare, enCompare],
+  ['hosts', hosts, enHosts],
+  ['relay-workflow', relay, enRelay],
+]) {
+  assert.ok(!/<div\b[^>]*\bdata-guide-section="en"/.test(zhDoc), `Chinese ${label} strips hidden English section`);
+  assert.ok(!/<hr\b[^>]*\bclass="lang-divider"/.test(zhDoc), `Chinese ${label} strips lang-divider`);
+  assert.ok(!/<div\b[^>]*\bdata-guide-section="zh"/.test(enDoc), `English ${label} strips hidden Chinese section`);
+  assert.ok(!/<hr\b[^>]*\bclass="lang-divider"/.test(enDoc), `English ${label} strips lang-divider`);
+}
 
 const cjk = /[\u4e00-\u9fff]/;
 const stripSwitchAndScripts = (doc) =>
@@ -136,13 +153,15 @@ const stripSwitchAndScripts = (doc) =>
 assert.ok(!cjk.test(stripSwitchAndScripts(enHtml)), 'no untranslated CJK in static en/index.html');
 assert.ok(!cjk.test(stripSwitchAndScripts(enGuide)), 'no untranslated CJK in static en/guide.html');
 assert.ok(!cjk.test(stripSwitchAndScripts(enCompare)), 'no untranslated CJK in static en/compare.html');
+assert.ok(!cjk.test(stripSwitchAndScripts(enHosts)), 'no untranslated CJK in static en/hosts.html');
+assert.ok(!cjk.test(stripSwitchAndScripts(enRelay)), 'no untranslated CJK in static en/relay-workflow.html');
 
 assert.ok(!html.includes('/blob/main/app/README.md'), 'no link to superseded public app/README.md');
-assert.ok(html.includes('href="./guide.html"'), 'links to verified local guide.html');
-assert.ok(enHtml.includes('href="./guide.html"'), 'English homepage links to en/guide.html');
-assert.ok(html.includes('href="./compare.html"'), 'links to verified local compare.html');
-assert.ok(enHtml.includes('href="./compare.html"'), 'English homepage links to en/compare.html');
-for (const doc of [html, enHtml, guide, enGuide, compare, enCompare, notFound]) {
+for (const targetHref of ['href="./guide.html"', 'href="./compare.html"', 'href="./hosts.html"', 'href="./relay-workflow.html"']) {
+  assert.ok(html.includes(targetHref), `Chinese homepage links to ${targetHref}`);
+  assert.ok(enHtml.includes(targetHref), `English homepage links to ${targetHref}`);
+}
+for (const doc of [html, enHtml, guide, enGuide, compare, enCompare, hosts, enHosts, relay, enRelay, notFound]) {
   assert.ok(!doc.includes('brand-mark.svg'));
   assert.ok(!doc.includes('favicon.svg'));
   assert.ok(!doc.includes('src="./assets/senrelay-logo-original-v1.png"'), 'pages use lightweight display logo');
@@ -157,6 +176,8 @@ assert.deepEqual(
   ['WebSite', 'SoftwareApplication', 'Organization', 'Person', 'FAQPage'],
 );
 assert.equal(graph['@graph'][2].name, `${graph['@graph'][0].name}`, 'zh Organization name matches zh display name');
+assert.ok(Array.isArray(graph['@graph'][0].keywords) && graph['@graph'][0].keywords.length >= 4, 'zh WebSite includes keywords');
+assert.ok(graph['@graph'][1].disambiguatingDescription?.includes('context-core.dev'), 'zh SoftwareApplication disambiguates context-core.dev');
 assert.equal(graph['@graph'][3].url, 'https://github.com/qingsongcui');
 assert.ok(graph['@graph'][3].sameAs.includes('https://x.com/George_ONair'));
 assert.equal(graph['@graph'][4].mainEntity.length, 9, 'nine FAQ entities in zh JSON-LD');
@@ -167,16 +188,24 @@ assert.deepEqual(
   ['WebSite', 'SoftwareApplication', 'Organization', 'Person', 'FAQPage'],
 );
 assert.equal(enGraph['@graph'][0].inLanguage, 'en');
+assert.ok(Array.isArray(enGraph['@graph'][0].keywords) && enGraph['@graph'][0].keywords.length >= 4, 'en WebSite includes keywords');
+assert.ok(enGraph['@graph'][1].disambiguatingDescription?.includes('context-core.dev'), 'en SoftwareApplication disambiguates context-core.dev');
 assert.equal(enGraph['@graph'][2].name, enGraph['@graph'][1].name, 'en Organization name uses un-suffixed English brand');
 assert.equal(enGraph['@graph'][4].mainEntity.length, 9, 'nine FAQ entities in en JSON-LD');
 
-const guideGraph = JSON.parse(guide.match(/<script type="application\/ld\+json">(.*?)<\/script>/s)[1]);
-assert.deepEqual(guideGraph['@graph'].map((n) => n['@type']), ['TechArticle', 'FAQPage', 'BreadcrumbList', 'Person']);
-assert.equal(guideGraph['@graph'][1].mainEntity.length, 3, 'three troubleshooting FAQ entities in zh guide JSON-LD');
-assert.ok(guideGraph['@graph'][0].dateModified >= '2026-11-15', 'guide dateModified is updated to >= 2026-11-15');
-const enGuideGraph = JSON.parse(enGuide.match(/<script type="application\/ld\+json">(.*?)<\/script>/s)[1]);
-assert.deepEqual(enGuideGraph['@graph'].map((n) => n['@type']), ['TechArticle', 'FAQPage', 'BreadcrumbList', 'Person']);
-assert.equal(enGuideGraph['@graph'][1].mainEntity.length, 3, 'three troubleshooting FAQ entities in en guide JSON-LD');
+for (const [label, doc, faqCount] of [
+  ['guide.html', guide, 3],
+  ['en/guide.html', enGuide, 3],
+  ['hosts.html', hosts, 4],
+  ['en/hosts.html', enHosts, 4],
+  ['relay-workflow.html', relay, 4],
+  ['en/relay-workflow.html', enRelay, 4],
+]) {
+  const docGraph = JSON.parse(doc.match(/<script type="application\/ld\+json">(.*?)<\/script>/s)[1]);
+  assert.deepEqual(docGraph['@graph'].map((n) => n['@type']), ['TechArticle', 'FAQPage', 'BreadcrumbList', 'Person']);
+  assert.equal(docGraph['@graph'][1].mainEntity.length, faqCount, `${faqCount} FAQ entities in ${label} JSON-LD`);
+  assert.ok(docGraph['@graph'][0].dateModified >= '2026-11-15', `${label} dateModified is updated to >= 2026-11-15`);
+}
 
 const compareGraph = JSON.parse(compare.match(/<script type="application\/ld\+json">(.*?)<\/script>/s)[1]);
 assert.deepEqual(compareGraph['@graph'].map((n) => n['@type']), ['TechArticle', 'ItemList', 'FAQPage', 'BreadcrumbList', 'Person']);
@@ -204,6 +233,10 @@ for (const [label, doc] of [
   ['en/guide.html', enGuide],
   ['compare.html', compare],
   ['en/compare.html', enCompare],
+  ['hosts.html', hosts],
+  ['en/hosts.html', enHosts],
+  ['relay-workflow.html', relay],
+  ['en/relay-workflow.html', enRelay],
 ]) {
   const titleText = doc.match(/<title>(.*?)<\/title>/s)[1].replace(/&amp;/g, '&').trim();
   assert.ok(titleText.length >= 20 && titleText.length <= 60, `title length (${titleText.length}) must be 20..60 chars in ${label}: "${titleText}"`);
@@ -231,17 +264,22 @@ for (const [label, doc] of [['index.html', html], ['en/index.html', enHtml]]) {
   assert.match(doc, /id="about-privacy"/, `About & Privacy box exists in ${label}`);
   assert.ok(doc.includes('1.0.0-beta.2'), `current version 1.0.0-beta.2 appears in ${label}`);
   assert.ok(doc.includes('127.0.0.1:8420/mcp/') && doc.includes('contextcore'), `MCP endpoint & key contextcore documented in ${label}`);
-  const bodyInternalLinks = [...doc.matchAll(/<a\b[^>]*class="inline-link"[^>]*href="(?:#|\.?\/(?:guide|compare)\.html)[^"]*"/g)];
-  assert.ok(bodyInternalLinks.length >= 5, `at least 5 descriptive inline internal links in ${label} (found ${bodyInternalLinks.length})`);
+  const bodyInternalLinks = [...doc.matchAll(/<a\b[^>]*class="inline-link"[^>]*href="(?:#|\.?\/(?:guide|compare|hosts|relay-workflow)\.html)[^"]*"/g)];
+  assert.ok(bodyInternalLinks.length >= 6, `at least 6 descriptive inline internal links in ${label} (found ${bodyInternalLinks.length})`);
 }
 
-for (const [label, doc] of [['guide.html', guide], ['en/guide.html', enGuide]]) {
+for (const [label, doc] of [['guide.html', guide], ['en/guide.html', enGuide], ['hosts.html', hosts], ['en/hosts.html', enHosts], ['relay-workflow.html', relay], ['en/relay-workflow.html', enRelay]]) {
   assert.ok(doc.includes('1.0.0-beta.2'), `current version 1.0.0-beta.2 appears in ${label}`);
   assert.ok(doc.includes('127.0.0.1:8420/mcp/') && doc.includes('contextcore'), `MCP endpoint & key contextcore documented in ${label}`);
   for (const host of ['Claude Code', 'Codex', 'Cursor', 'Antigravity', 'OMP', 'OpenCode']) {
     assert.ok(doc.includes(host), `core host ${host} appears in ${label}`);
   }
 }
+
+assert.ok(hosts.includes('~/.claude.json') && hosts.includes('~/.openclaw/openclaw.json') && hosts.includes('~/.config/opencode/opencode.json'), 'hosts.html verifies concrete config file paths');
+assert.ok(enHosts.includes('~/.claude.json') && enHosts.includes('~/.openclaw/openclaw.json') && enHosts.includes('~/.config/opencode/opencode.json'), 'en/hosts.html verifies concrete config file paths');
+assert.ok(relay.includes('must_not_execute=true') && relay.includes('read_conversation_messages'), 'relay-workflow.html covers relay tool contract');
+assert.ok(enRelay.includes('must_not_execute=true') && enRelay.includes('read_conversation_messages'), 'en/relay-workflow.html covers relay tool contract');
 
 for (const [label, doc, pickerAttr] of [['compare.html', compare, 'zh'], ['en/compare.html', enCompare, 'en']]) {
   assert.match(doc, new RegExp(`data-picker="${pickerAttr}"`), `interactive stack picker exists in ${label}`);
@@ -258,10 +296,17 @@ assert.match(guide, /class="language-switch"/);
 assert.match(enGuide, /class="language-switch"/);
 assert.match(compare, /class="language-switch"/);
 assert.match(enCompare, /class="language-switch"/);
+assert.match(hosts, /class="language-switch"/);
+assert.match(enHosts, /class="language-switch"/);
+assert.match(relay, /class="language-switch"/);
+assert.match(enRelay, /class="language-switch"/);
 
 // GEO llms.txt & llms-full.txt checks
 const llmsSummaryLine = llms.split('\n').find((line) => line.startsWith('> '));
 assert.ok(llmsSummaryLine && !cjk.test(llmsSummaryLine), 'llms.txt blockquote summary is pure English');
+assert.match(llms, /context-core\.dev/);
+assert.match(llms, /hosts\.html/);
+assert.match(llms, /relay-workflow\.html/);
 assert.match(llms, /brew install --cask qingsongcui\/tap\/senrelay/);
 assert.match(llms, /pip install contextcore/);
 assert.match(llms, /http:\/\/127\.0\.0\.1:8420\/mcp\//);
@@ -278,8 +323,10 @@ assert.ok(!llmsFull.includes('💡') && !llmsFull.includes('📌'), 'no decorati
 assert.ok(!llmsFull.includes('6-point'), 'no stale 6-point handoff card reference in llms-full.txt');
 
 const production = html.includes('content="index, follow"');
+const expectedClarityId = (process.env.CLARITY_ID || '').trim();
+const deployedDocs = [html, enHtml, guide, enGuide, compare, enCompare, hosts, enHosts, relay, enRelay];
 if (production) {
-  for (const doc of [html, enHtml, guide, enGuide, compare, enCompare]) {
+  for (const doc of deployedDocs) {
     assert.match(doc, /content="index, follow"/);
     assert.match(doc, /rel="canonical"/);
     assert.match(doc, /hreflang="zh-CN"/);
@@ -288,12 +335,18 @@ if (production) {
     assert.match(doc, /hreflang="x-default"/);
     assert.match(doc, /property="og:image"/);
     assert.match(doc, /property="og:image:width" content="1536"/);
+    if (expectedClarityId) {
+      assert.ok(doc.includes(`https://www.clarity.ms/tag/`), 'Clarity script tag injected in production when CLARITY_ID set');
+    } else {
+      assert.ok(!doc.includes('https://www.clarity.ms/tag/'), 'no Clarity tag injected when CLARITY_ID unset');
+    }
   }
   const sitemap = await readFile(path.join(root, 'sitemap.xml'), 'utf8');
   assert.match(sitemap, /xmlns:xhtml="http:\/\/www\.w3\.org\/1999\/xhtml"/);
-  assert.equal((sitemap.match(/<url>/g) || []).length, 6, 'six canonical URLs in sitemap.xml');
-  assert.equal((sitemap.match(/<lastmod>\d{4}-\d{2}-\d{2}<\/lastmod>/g) || []).length, 6, 'valid lastmod dates');
+  assert.equal((sitemap.match(/<url>/g) || []).length, 10, 'ten canonical URLs in sitemap.xml');
+  assert.equal((sitemap.match(/<lastmod>\d{4}-\d{2}-\d{2}<\/lastmod>/g) || []).length, 10, 'valid lastmod dates');
   assert.ok(sitemap.includes('<lastmod>2026-11-15</lastmod>'), 'sitemap lastmod aligned to 2026-11-15');
+  assert.ok(sitemap.includes('/hosts.html') && sitemap.includes('/relay-workflow.html'), 'sitemap includes new technical guide URLs');
   assert.match(sitemap, /xhtml:link rel="alternate" hreflang="en"/);
   const robots = await readFile(path.join(root, 'robots.txt'), 'utf8');
   for (const bot of ['Googlebot', 'OAI-SearchBot', 'GPTBot', 'ClaudeBot', 'PerplexityBot', 'Google-Extended', 'Applebot-Extended', 'Bytespider', 'Baiduspider']) {
@@ -301,9 +354,10 @@ if (production) {
   }
   assert.match(robots, /Sitemap: /);
 } else {
-  for (const doc of [html, enHtml, guide, enGuide, compare, enCompare]) {
+  for (const doc of deployedDocs) {
     assert.match(doc, /content="noindex, nofollow"/);
     assert.ok(!doc.includes('rel="canonical"'));
+    assert.ok(!doc.includes('https://www.clarity.ms/tag/'), 'no analytics in preview builds');
   }
   assert.equal((await readFile(path.join(root, 'robots.txt'), 'utf8')).trim(), 'User-agent: *\nDisallow: /');
 }

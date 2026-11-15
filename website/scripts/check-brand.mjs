@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const temp = await mkdtemp(path.join(os.tmpdir(), 'contextcore-site-brand-'));
 try {
-  for (const entry of ['index.html', 'guide.html', 'compare.html', '404.html', 'assets', 'scripts', 'brand.config.mjs']) await cp(path.join(root, entry), path.join(temp, entry), { recursive: true });
+  for (const entry of ['index.html', 'guide.html', 'compare.html', 'hosts.html', 'relay-workflow.html', '404.html', 'assets', 'scripts', 'brand.config.mjs']) await cp(path.join(root, entry), path.join(temp, entry), { recursive: true });
   const config = (await readFile(path.join(temp, 'brand.config.mjs'), 'utf8'))
     .replace("name: 'Senrelay'", "name: 'Renamed Context'")
     .replace("chineseName: '续境'", "chineseName: '改名境'");
@@ -43,6 +43,20 @@ try {
   const enCompare = await readFile(path.join(temp, 'dist/en/compare.html'), 'utf8');
   assert.match(enCompare, /<title>Renamed Context — 5 Ways to Share AI Agent Context \(2026\)<\/title>/);
   assert.ok(!enCompare.includes('Senrelay —'));
+
+  for (const [docFile, enExpectedTitle] of [
+    ['hosts.html', '<title>Renamed Context — MCP &amp; Skills Config Paths Across 15 Agents</title>'],
+    ['relay-workflow.html', '<title>Renamed Context — Cross-Agent Relay Workflow: Claude to Codex</title>'],
+  ]) {
+    const zhDoc = await readFile(path.join(temp, 'dist', docFile), 'utf8');
+    assert.ok(zhDoc.includes('Renamed Context'), `${docFile} brand updated`);
+    assert.ok(zhDoc.includes('改名境'), `${docFile} chineseName updated`);
+    assert.ok(!zhDoc.includes('Senrelay · 续境'), `${docFile} has no stale brand`);
+
+    const enDoc = await readFile(path.join(temp, 'dist/en', docFile), 'utf8');
+    assert.ok(enDoc.includes(enExpectedTitle), `en/${docFile} title updated`);
+    assert.ok(!enDoc.includes('Senrelay —'), `en/${docFile} has no stale brand`);
+  }
 
   const notFound = await readFile(path.join(temp, 'dist/404.html'), 'utf8');
   assert.ok(notFound.includes('Renamed Context'));

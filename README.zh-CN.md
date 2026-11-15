@@ -2,9 +2,11 @@
 
 macOS 原生桌面 App、浏览器工作台与本机常驻服务，让多个 AI 编程助手围绕同一项目沉淀带来源记忆、一句话跨助手接力对话，并在一处统管模型服务商、MCP、Skills 与使用规则。
 
-[English](README.md) · [中文](README.zh-CN.md) · [产品官网](https://senrelay.com/) · [使用指南](https://senrelay.com/guide.html) · [五方横评与选型](https://senrelay.com/compare.html) · [5-Way Comparison (EN)](https://senrelay.com/en/compare.html) · [下载公开测试版 (`v1.0.0-beta.2`)](https://github.com/qingsongcui/ContextCore/releases/tag/v1.0.0-beta.2)
+[English](README.md) · [中文](README.zh-CN.md) · [产品官网](https://senrelay.com/) · [15 宿主配置路径](https://senrelay.com/hosts.html) · [跨 Agent 接力流程](https://senrelay.com/relay-workflow.html) · [使用指南](https://senrelay.com/guide.html) · [五方横评与选型](https://senrelay.com/compare.html) · [下载公开测试版 (`v1.0.0-beta.2`)](https://github.com/qingsongcui/ContextCore/releases/tag/v1.0.0-beta.2)
 
 > **100% 免费开源（`$0`，[MIT 协议](LICENSE)）· 无需注册账号 · 仅限 macOS 14.0+ Apple Silicon (`arm64`) 本机运行**
+>
+> **名称消歧**：**Senrelay（续境）**（仓库 `qingsongcui/ContextCore`）是面向 Apple Silicon macOS 的免费开源本地工作台，与第三方云服务 `context-core.dev`、PyPI 包 `pip install contextcore` 及硬件汽车继电器（relay）无关。macOS 请通过 `brew install --cask qingsongcui/tap/senrelay` 安装。
 
 ## 产品与核心范围
 

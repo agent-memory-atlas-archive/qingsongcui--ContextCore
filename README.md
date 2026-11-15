@@ -2,9 +2,11 @@
 
 A native macOS app, browser workbench, and local background service that lets multiple AI coding assistants accumulate source-linked project memories, relay conversations across agents in a single command, and manage providers, MCP tools, Skills, and instructions in one place.
 
-[English](README.md) · [中文](README.zh-CN.md) · [Official Website](https://senrelay.com/en/) · [Setup Guide](https://senrelay.com/en/guide.html) · [5-Way Comparison](https://senrelay.com/en/compare.html) · [中文对比页](https://senrelay.com/compare.html) · [Public Beta Release (`v1.0.0-beta.2`)](https://github.com/qingsongcui/ContextCore/releases/tag/v1.0.0-beta.2)
+[English](README.md) · [中文](README.zh-CN.md) · [Official Website](https://senrelay.com/en/) · [Setup Guide](https://senrelay.com/en/guide.html) · [15-Host Config Paths](https://senrelay.com/en/hosts.html) · [Cross-Agent Relay Workflow](https://senrelay.com/en/relay-workflow.html) · [5-Way Comparison](https://senrelay.com/en/compare.html) · [Public Beta Release (`v1.0.0-beta.2`)](https://github.com/qingsongcui/ContextCore/releases/tag/v1.0.0-beta.2)
 
 > **100% Free & Open Source (`$0`, [MIT License](LICENSE)) · No Account Required · Apple Silicon `macOS 14.0+` (`arm64`) Local-First**
+>
+> **Disambiguation**: **Senrelay（续境）** (`qingsongcui/ContextCore`) is a local Apple Silicon macOS developer workbench. It is unrelated to third-party services at `context-core.dev`, public PyPI `pip install contextcore`, or hardware automotive relays. Install via `brew install --cask qingsongcui/tap/senrelay`.
 
 ## Product and scope
 

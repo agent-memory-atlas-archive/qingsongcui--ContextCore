@@ -1,0 +1,830 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#121412">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Senrelay · 续境 — 15 宿主 MCP 与 Skills 配置路径指南</title>
+  <meta name="description" content="汇总 15 个 AI 编程助手的 MCP、Skills 与规则文件路径及格式差异，说明写前快照、钥匙串隔离与 6+9 宿主能力边界。">
+  <meta property="og:type" content="article">
+  <meta property="og:locale" content="zh_CN">
+  <meta property="og:site_name" content="Senrelay · 续境">
+  <meta property="og:title" content="Senrelay · 续境 — 15 宿主 MCP 与 Skills 配置路径指南">
+  <meta property="og:description" content="汇总 15 个 AI 编程助手的 MCP、Skills 与规则文件路径及格式差异，说明写前快照、钥匙串隔离与 6+9 宿主能力边界。">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Senrelay · 续境 — 15 宿主 MCP 与 Skills 配置路径指南">
+  <meta name="twitter:description" content="汇总 Claude Code、Codex、Cursor 等 6 大核心宿主与 9 类扩展宿主的真实配置文件路径、格式转换规则与安全同步边界。">
+  <!-- deployment-metadata -->
+  <link rel="icon" href="./favicon.ico" sizes="48x48">
+  <link rel="icon" href="./assets/icon-192.png" type="image/png" sizes="192x192">
+  <link rel="apple-touch-icon" href="./assets/apple-touch-icon.png" sizes="180x180">
+  <link rel="stylesheet" href="./assets/site.css">
+  <script>document.documentElement.classList.add('has-js');</script>
+  <style>
+    .guide-page p code, .guide-page li code, .guide-page td code, .guide-page th code {
+      overflow-wrap: anywhere;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 12px;
+      padding: 1px 5px;
+      border-radius: 3px;
+      background: rgba(183, 196, 161, 0.08);
+      border: 0;
+      color: #d6e2c3;
+    }
+    .guide-page {
+      padding: 56px 0 104px;
+    }
+    .guide-header {
+      margin-bottom: 40px;
+      padding-bottom: 32px;
+      border-bottom: 1px solid var(--line);
+    }
+    .guide-header h1 {
+      font-size: clamp(28px, 3.8vw, 42px);
+      line-height: 1.24;
+      letter-spacing: -0.03em;
+      margin: 16px 0 16px;
+      color: var(--ink);
+    }
+    .guide-lead {
+      color: var(--muted);
+      font-size: 15.5px;
+      line-height: 1.82;
+      max-width: 68ch;
+    }
+    .guide-meta-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px 22px;
+      margin-top: 18px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+      color: var(--sage);
+    }
+    .callout {
+      background: transparent;
+      border: 0;
+      border-top: 1px solid var(--line-strong);
+      border-bottom: 1px solid var(--line);
+      border-radius: 0;
+      padding: 26px 0;
+      margin: 0 0 52px;
+      box-shadow: none;
+    }
+    .callout-title {
+      font-weight: 560;
+      font-size: 13px;
+      letter-spacing: 0.04em;
+      color: var(--sage);
+      margin-bottom: 16px;
+    }
+    .callout-list {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 28px;
+    }
+    .callout-list p {
+      color: var(--muted);
+      font-size: 13.5px;
+      line-height: 1.8;
+      margin: 0;
+    }
+    .callout-list p strong {
+      display: block;
+      color: var(--ink);
+      font-size: 14.5px;
+      font-weight: 560;
+      margin-bottom: 6px;
+    }
+    .guide-section {
+      margin: 56px 0;
+      padding-top: 32px;
+      border-top: 1px solid var(--line);
+    }
+    .guide-section .section-kicker {
+      display: block;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      color: var(--sage);
+      margin-bottom: 8px;
+    }
+    .guide-section h2 {
+      font-size: 23px;
+      font-weight: 560;
+      letter-spacing: -0.02em;
+      margin: 0 0 18px;
+      color: var(--ink);
+    }
+    .guide-section h3 {
+      font-size: 15.5px;
+      font-weight: 560;
+      color: #dce5ce;
+      margin: 26px 0 10px;
+    }
+    .guide-section p {
+      color: var(--muted);
+      margin-bottom: 14px;
+      font-size: 14.5px;
+      line-height: 1.82;
+      max-width: 68ch;
+    }
+    .guide-section ul, .guide-section ol {
+      margin: 12px 0 22px 20px;
+      padding: 0;
+      color: var(--muted);
+      font-size: 14.5px;
+      line-height: 1.82;
+      max-width: 68ch;
+    }
+    .guide-section li {
+      margin-bottom: 10px;
+    }
+    .guide-section li strong {
+      color: var(--ink);
+      font-weight: 560;
+    }
+    pre.code-block {
+      background: #141712;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 18px 20px;
+      overflow-x: auto;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 13px;
+      line-height: 1.65;
+      color: #dce5ce;
+      margin: 14px 0 22px;
+      box-shadow: none;
+    }
+    pre.code-block code {
+      font-family: inherit;
+      background: none;
+      border: 0;
+      padding: 0;
+    }
+    .code-comment {
+      color: #7c8770;
+    }
+    .boundary-list {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 32px 40px;
+      margin-top: 20px;
+    }
+    .boundary-card {
+      background: transparent;
+      border: 0;
+      border-top: 1px solid var(--line-soft);
+      border-radius: 0;
+      padding: 18px 0 0;
+      margin: 0;
+    }
+    .boundary-card h3 {
+      font-size: 15px;
+      font-weight: 560;
+      color: var(--sage);
+      margin: 0 0 10px;
+    }
+    .boundary-card p {
+      font-size: 13.5px;
+      color: var(--muted);
+      margin: 0;
+      line-height: 1.8;
+    }
+    .guide-faq details {
+      border-top: 1px solid var(--line-soft);
+      padding: 16px 0;
+    }
+    .guide-faq details:last-child {
+      border-bottom: 1px solid var(--line);
+    }
+    .guide-faq summary {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      cursor: pointer;
+      font-size: 14.5px;
+      font-weight: 540;
+      color: #eef3e8;
+      list-style: none;
+    }
+    .guide-faq summary::-webkit-details-marker {
+      display: none;
+    }
+    .guide-faq details p {
+      margin: 10px 0 0;
+      font-size: 13.5px;
+      line-height: 1.78;
+      color: var(--muted);
+      max-width: 66ch;
+    }
+    .lang-divider {
+      margin: 56px 0 40px;
+      border: 0;
+      border-top: 1px solid var(--line);
+    }
+    html.has-js .lang-divider {
+      display: none;
+    }
+    html.has-js[data-guide-lang="zh"] [data-guide-section="en"],
+    html.has-js[data-guide-lang="en"] [data-guide-section="zh"] {
+      display: none;
+    }
+    @media (max-width: 860px) {
+      .callout-list,
+      .boundary-list {
+        grid-template-columns: 1fr;
+        gap: 20px;
+      }
+    }
+  </style>
+</head>
+<body>
+<a class="skip" href="#main" data-zh="跳到主要内容" data-en="Skip to main content">跳到主要内容</a>
+<header class="site-header"><div class="header wrap">
+<a class="brand" href="./" aria-label="Senrelay 续境首页" data-aria-zh="Senrelay 续境首页" data-aria-en="Senrelay home"><img class="brand-symbol" src="./assets/senrelay-logo-display-v1.png" width="28" height="35" decoding="async" alt="" aria-hidden="true">Senrelay<span class="brand-cn" data-zh="· 续境" data-en="">· 续境</span></a>
+<nav aria-label="页面导航" data-aria-zh="页面导航" data-aria-en="Page navigation"><a href="./" data-zh="← 首页" data-en="← Home">← 首页</a><a href="./relay-workflow.html" data-zh="接力流程" data-en="Relay Workflow">接力流程</a><a href="./compare.html" data-zh="方案对比" data-en="Compare">方案对比</a><a href="./guide.html" data-zh="运行指南" data-en="Setup Guide">运行指南</a></nav>
+<div class="header-tools"><div class="language-switch" role="group" aria-label="语言" data-aria-zh="语言" data-aria-en="Language"><a href="./hosts.html" data-lang="zh" aria-current="page" lang="zh-CN">中</a><a href="./en/hosts.html" data-lang="en" lang="en">EN</a></div><a class="header-github" href="https://github.com/qingsongcui/ContextCore" target="_blank" rel="noopener noreferrer">GitHub <span aria-hidden="true">↗</span><span class="sr-only" data-zh="（新窗口）" data-en="(opens in a new window)">（新窗口）</span></a></div>
+</div></header>
+
+<main id="main" class="wrap guide-page">
+  <div class="guide-header">
+    <div class="eyebrow"><span class="live-dot"></span> HOST CONFIG REFERENCE / 6 CORE + 9 EXTENDED <span class="tiny-line"></span></div>
+    <h1 data-zh="15 个 AI 编程助手的 MCP、Skills 与规则文件路径指南" data-en="MCP, Skills &amp; Rule Config Paths Across 15 AI Coding Agents">15 个 AI 编程助手的 MCP、Skills 与规则文件路径指南</h1>
+    <p class="guide-lead" data-zh="不同编程工具把 MCP 服务器、服务商模型、Skills 与指令规则分别存在 JSON、TOML、JSON5 和 YAML 中，根键名也各不相同。本文列出 6 类核心接力宿主与 9 类扩展配置宿主的真实磁盘路径与写入保护规则，并说明 Senrelay（续境，GitHub 仓库 qingsongcui/ContextCore）如何做格式转换而不破坏手动注释与密钥。" data-en="AI coding clients scatter MCP endpoints, providers, Skills, and instruction files across incompatible JSON, TOML, JSON5, and YAML schemas. This reference maps every verified file path and write boundary across 6 core relay hosts and 9 extended config hosts supported by Senrelay (GitHub repository qingsongcui/ContextCore).">不同编程工具把 MCP 服务器、服务商模型、Skills 与指令规则分别存在 JSON、TOML、JSON5 和 YAML 中，根键名也各不相同。本文列出 6 类核心接力宿主与 9 类扩展配置宿主的真实磁盘路径与写入保护规则，并说明 Senrelay（续境，GitHub 仓库 qingsongcui/ContextCore）如何做格式转换而不破坏手动注释与密钥。</p>
+    <div class="guide-meta-bar">
+      <span data-zh="核对日期：2026-11-15" data-en="Verified: 2026-11-15">核对日期：2026-11-15</span>
+      <span data-zh="协议与定价：$0 · MIT 开源（macOS Apple Silicon）" data-en="License &amp; Price: $0 · MIT Open Source (Apple Silicon macOS)">协议与定价：$0 · MIT 开源（macOS Apple Silicon）</span>
+      <span data-zh="MCP 服务键名：contextcore（127.0.0.1:8420/mcp/）" data-en="MCP Key: contextcore (127.0.0.1:8420/mcp/)">MCP 服务键名：contextcore（127.0.0.1:8420/mcp/）</span>
+    </div>
+  </div>
+
+  <div data-guide-section="zh">
+    <div class="callout" role="note">
+      <div class="callout-title">先掌握三个配置事实</div>
+      <div class="callout-list">
+        <p><strong>键名与格式并不通用</strong>Claude Code 与 Cursor 用 JSON 里的 <code>mcpServers</code>，Codex 用 TOML 里的 <code>[mcp_servers.*]</code>，OpenCode 用 <code>opencode.json</code> 中的 <code>mcp</code>，而 OpenClaw 直接不支持原生 MCP 同步——不能拿软链接硬套。</p>
+        <p><strong>6 核 + 9 扩严格分层</strong>6 个核心宿主具备本地会话捕获与 <code>/contextcore</code> 全文接力；其余 9 个扩展宿主只提供带预览差异与回滚快照的配置管理，不夸大对接力能力的覆盖范围（见<a class="inline-link" href="./compare.html">5 种方案对比</a>）。</p>
+        <p><strong>单机与密钥边界</strong>面向 Apple Silicon（<code>arm64</code>）macOS 14.0+，不支持 Windows 或 Linux。API Key 留在 macOS 系统钥匙串中，公开与导出配置时自动剔除密钥。</p>
+      </div>
+    </div>
+
+    <section class="guide-section" id="core-hosts">
+      <span class="section-kicker">01 · SIX CORE RELAY HOSTS</span>
+      <h2>六大核心接力宿主：配置路径、格式与特殊约束</h2>
+      <p>以下 6 个宿主同时接入 Senrelay（续境）的本地配置同步与对话捕获管线。点击工作台「一键接入续境」时，后台会在本机文件中按统一键名 <code>contextcore</code> 写入 <code>http://127.0.0.1:8420/mcp/</code>，并按需写入伴生 Hook 与 Skill。</p>
+      <div class="host-matrix-wrap">
+        <table class="host-matrix-table">
+          <caption>表 1 · 六大核心宿主的真实配置文件路径与格式（2026-11-15 核对源码）</caption>
+          <thead>
+            <tr>
+              <th>宿主（形态）</th>
+              <th>MCP 配置路径与格式</th>
+              <th>模型 / 服务商 / Hook</th>
+              <th>Skill 与规则文件</th>
+              <th>工程特例说明</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <th scope="row">Claude Code<br><small>CLI</small></th>
+              <td><code>~/.claude.json</code><br><small>JSON · 根键 <code>mcpServers</code></small></td>
+              <td><code>~/.claude/settings.json</code><br><small>Hook 与服务商环境变量</small></td>
+              <td><code>~/.claude/skills/contextcore/SKILL.md</code><br><code>~/.claude/CLAUDE.md</code></td>
+              <td>支持项目级与用户级规则共读；接入时使用原生 Hook 管线。</td>
+            </tr>
+            <tr>
+              <th scope="row">Codex<br><small>Desktop / CLI</small></th>
+              <td><code>~/.codex/config.toml</code><br><small>TOML · <code>[mcp_servers.contextcore]</code></small></td>
+              <td><code>~/.codex/config.toml</code><br><code>~/.codex/hooks.json</code></td>
+              <td><code>~/.codex/skills/contextcore/SKILL.md</code><br><code>~/.codex/AGENTS.md</code></td>
+              <td>Desktop 与 CLI 共用配置文件；仓库内 <code>AGENTS.override.md</code> 或自定义 <code>CODEX_HOME</code> 会覆盖全局规则。</td>
+            </tr>
+            <tr>
+              <th scope="row">Cursor<br><small>IDE / CLI</small></th>
+              <td><code>~/.cursor/mcp.json</code><br><small>JSON · 根键 <code>mcpServers</code></small></td>
+              <td><code>~/.cursor/hooks.json</code></td>
+              <td><code>~/.cursor/skills/contextcore/SKILL.md</code></td>
+              <td>Cursor 全局 User Rules 位于私有状态库，<code>.mdc</code> 规则需在项目内配置。</td>
+            </tr>
+            <tr>
+              <th scope="row">Antigravity<br><small>Desktop</small></th>
+              <td><code>~/.gemini/config/mcp_config.json</code><br><small>JSON · 根键 <code>mcpServers</code></small></td>
+              <td><code>~/.gemini/config/hooks.json</code></td>
+              <td><code>~/.gemini/config/skills/contextcore/SKILL.md</code><br><code>~/.gemini/config/rules</code></td>
+              <td>模型在桌面端菜单自行选择；工作台不改写其私有认证缓存。</td>
+            </tr>
+            <tr>
+              <th scope="row">OMP (Oh My Pi)<br><small>CLI</small></th>
+              <td><code>~/.omp/agent/mcp.json</code><br><small>JSON · 根键 <code>mcpServers</code></small></td>
+              <td><code>~/.omp/agent/models.yml</code><br><code>~/.omp/agent/config.yml</code><br><code>~/.omp/agent/hooks/pre/contextcore.ts</code></td>
+              <td><code>~/.omp/agent/commands/contextcore.md</code><br><code>~/.omp/agent/AGENTS.md</code></td>
+              <td>若同目录已存在 <code>.yaml</code> 则优先沿用；如留有旧版 <code>settings.json</code> / <code>models.json</code> 会拒绝混写；子代理默认不继承根 <code>AGENTS.md</code>。</td>
+            </tr>
+            <tr>
+              <th scope="row">OpenCode<br><small>CLI</small></th>
+              <td><code>~/.config/opencode/opencode.json</code><br><small>JSON · 根键 <code>mcp</code>（非 <code>mcpServers</code>）</small></td>
+              <td><code>~/.config/opencode/opencode.json</code><br><code>~/.config/opencode/plugins/contextcore.ts</code></td>
+              <td><code>~/.config/opencode/skills</code><br><code>~/.config/opencode/commands/contextcore.md</code></td>
+              <td>MCP、服务商与默认模型同驻 <code>opencode.json</code>，键名结构与 Claude Code 不同，由原生适配器转换。</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="guide-section" id="extended-hosts">
+      <span class="section-kicker">02 · NINE EXTENDED CONFIG HOSTS</span>
+      <h2>九类扩展宿主：仅管理配置与快照，不做会话接力</h2>
+      <p>以下 9 个宿主在 Senrelay 工作台中属于「扩展配置目标」，提供<strong>配置预览、格式转换与写前快照回滚</strong>，但<strong>不采集它们的会话日志，也不支持 <code>/contextcore</code> 对话接力</strong>。每项写入都在支持的能力子集内按宿主原生格式校验：</p>
+      <div class="host-matrix-wrap">
+        <table class="host-matrix-table">
+          <caption>表 2 · 九类扩展配置宿主的配置文件路径与边界限制</caption>
+          <thead>
+            <tr>
+              <th>扩展宿主</th>
+              <th>MCP 配置路径与格式</th>
+              <th>模型 / 服务商文件</th>
+              <th>Skills / 规则路径</th>
+              <th>明确拒绝或不适用范围</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <th scope="row">Claude Desktop</th>
+              <td><code>~/Library/Application Support/Claude/claude_desktop_config.json</code><br><small>JSON · <code>mcpServers</code></small></td>
+              <td>无（桌面端自行管理）</td>
+              <td>无独立 Skill / Prompt 目录</td>
+              <td>只同步 MCP；不支持提示词与会话接力。</td>
+            </tr>
+            <tr>
+              <th scope="row">Gemini CLI</th>
+              <td><code>~/.gemini/settings.json</code><br><small>JSON · <code>mcpServers</code></small></td>
+              <td>无统一提供商写入</td>
+              <td>无托管 Skill / Prompt 同步</td>
+              <td>仅提供本地 MCP 条目与快照管理。</td>
+            </tr>
+            <tr>
+              <th scope="row">Grok Build CLI</th>
+              <td><code>~/.grok/config.toml</code><br><small>TOML · <code>mcp_servers</code></small></td>
+              <td>仅读取服务商区块</td>
+              <td><code>~/.grok/skills</code><br><code>~/.grok/AGENTS.md</code></td>
+              <td>不支持从外部强行改写全局默认模型。</td>
+            </tr>
+            <tr>
+              <th scope="row">Kimi Code CLI</th>
+              <td><code>~/.kimi-code/mcp.json</code><br><small>JSON · <code>mcpServers</code></small></td>
+              <td><code>~/.kimi-code/config.toml</code><br><small>TOML</small></td>
+              <td><code>~/.kimi-code/skills</code><br><code>~/.kimi-code/AGENTS.md</code></td>
+              <td>MCP 与服务商分文件存储，无会话捕获。</td>
+            </tr>
+            <tr>
+              <th scope="row">MiniMax Code</th>
+              <td><code>~/.minimax/mcp.json</code><br><small>JSON · <code>mcpServers</code></small></td>
+              <td><code>~/.minimax/config.yaml</code><br><small>YAML</small></td>
+              <td><code>~/.minimax/skills</code><br><code>~/.minimax/AGENTS.md</code></td>
+              <td>JSON 与 YAML 双文件同步，无会话捕获。</td>
+            </tr>
+            <tr>
+              <th scope="row">Pi CLI</th>
+              <td><code>~/.pi/agent/mcp.json</code><br><small>JSON · <code>mcpServers</code></small></td>
+              <td><code>~/.pi/agent/models.json</code><br><code>~/.pi/agent/settings.json</code></td>
+              <td><code>~/.pi/agent/skills</code><br><code>~/.pi/agent/AGENTS.md</code></td>
+              <td>与 OMP 彻底隔离；如检测到手写的原生 JSON5 配置文件会拒绝覆盖写回。</td>
+            </tr>
+            <tr>
+              <th scope="row">Hermes Agent</th>
+              <td><code>~/.hermes/config.yaml</code><br><small>YAML · <code>mcp_servers</code></small></td>
+              <td><code>~/.hermes/config.yaml</code><br><small><code>custom_providers</code></small></td>
+              <td><code>~/.hermes/skills</code><br><code>~/.hermes/SOUL.md</code></td>
+              <td>提示词路径使用 <code>SOUL.md</code> 而非 <code>AGENTS.md</code>。</td>
+            </tr>
+            <tr>
+              <th scope="row">OpenClaw</th>
+              <td><strong>不支持原生 MCP</strong></td>
+              <td><code>~/.openclaw/openclaw.json</code><br><small>JSON5（保留注释）· <code>models.providers</code></small></td>
+              <td><code>~/.openclaw/skills</code><br><code>~/.openclaw/AGENTS.md</code></td>
+              <td>向 OpenClaw 请求写入 MCP 会被显式拒绝；支持保留 JSON5 注释修改模型。</td>
+            </tr>
+            <tr>
+              <th scope="row">agy (Antigravity CLI)</th>
+              <td><code>~/.gemini/config/mcp_config.json</code><br><small>JSON · <code>mcpServers</code></small></td>
+              <td>运行环境变量（<code>GEMINI_API_KEY</code>、<code>GOOGLE_GEMINI_BASE_URL</code>）与私有 <code>.gemini/antigravity-cli/settings.json</code></td>
+              <td><code>~/.gemini/config/skills</code><br><code>~/.gemini/config/AGENTS.md</code></td>
+              <td>与 Antigravity Desktop 独立配置管理；凭据留在本机环境变量而不写明文。</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="guide-section" id="safety-model">
+      <span class="section-kicker">03 · WRITE GUARDS &amp; DISAMBIGUATION</span>
+      <h2>为什么不该用软链接，以及 Senrelay 如何保证写前安全</h2>
+      <div class="boundary-list">
+        <div class="boundary-card">
+          <h3>格式转换 + 外部手改差异检测</h3>
+          <p><code>GNU Stow</code> 类软链接会把整个文件绑死在单一格式里，而多款编码助手运行时会自动向配置文件回写遥测或历史索引。Senrelay 在写入前保存时间戳回滚快照；一旦检测到磁盘内容曾在工作台之外被手动改写，会先弹出差异确认窗口再决定覆盖或跳过。</p>
+        </div>
+        <div class="boundary-card">
+          <h3>权限分级、Keychain 隔离与预算阻断</h3>
+          <p>读取对话、修改宿主文件与下载可选本地模型三项授权彼此独立；软件启动和配置导入绝不静默篡改用户已安装的 Skill。API Key 独立留在 macOS 钥匙串；向 <code>AGENTS.md</code> / <code>CLAUDE.md</code> 写入受保护规则时若超出预算上限会显式阻断，不会静默截断。</p>
+        </div>
+      </div>
+
+      <h3>名称与安装源消歧</h3>
+      <p>在命令行或搜索引擎中查找资料时，注意将 <strong>Senrelay（续境）</strong>（GitHub 仓库 <a class="inline-link" href="https://github.com/qingsongcui/ContextCore" target="_blank" rel="noopener noreferrer">qingsongcui/ContextCore</a>）与互联网上同名的无关第三方项目（如 <code>context-core.dev</code> 平台以及 PyPI 上的 <code>pip install contextcore</code> 包）区分开。在 Apple Silicon macOS 上应使用 Homebrew 安装或前往 GitHub Releases 获取 <code>v1.0.0-beta.2</code>（定价 <code>$0</code>，MIT 协议），首次启动后在终端清理一次隔离属性：</p>
+      <pre class="code-block"><code><span class="code-comment"># 1. 通过 Homebrew 安装（Apple Silicon macOS 14.0+）</span>
+brew install --cask qingsongcui/tap/senrelay
+
+<span class="code-comment"># 2. Beta 版本尚无 Apple 公证，手动安装后清理隔离属性</span>
+xattr -cr /Applications/Senrelay.app
+
+<span class="code-comment"># 3. 核对本地 MCP 服务端口（桌面常驻版 8420 / 源码开发模式 18420）</span>
+curl -s http://127.0.0.1:8420/health</code></pre>
+      <p>若你在 Windows 或 Linux 下开发，请不要安装 Senrelay——优先使用 Git 仓库内的 <code>AGENTS.md</code> / <code>CLAUDE.md</code>（<code>$0</code>），或参考 <a class="inline-link" href="./compare.html">5 种方案对比</a> 与 <a class="inline-link" href="./relay-workflow.html">跨 Agent 对话接力实战</a>。</p>
+    </section>
+
+    <section class="guide-section" id="about-privacy">
+      <span class="section-kicker">04 · FACT SHEET &amp; ATTRIBUTION</span>
+      <h2>适用范围与作者声明（2026-11-15 核对）</h2>
+      <div class="boundary-list">
+        <div class="boundary-card">
+          <h3>硬件限制与已知约束</h3>
+          <p><strong>$0</strong> 免费开源（MIT License，免登录）。仅面向 Apple Silicon（<code>arm64</code>）<code>macOS 14.0+</code>；不支持 Windows、Linux 或 Intel Mac；单机回环运行无云同步；扩展宿主仅限配置文件管理，无对话捕获或接力功能。</p>
+        </div>
+        <div class="boundary-card">
+          <h3>维护者与核对依据</h3>
+          <p>由独立开发者 <strong>Qingsong Cui（George O'Nair）</strong>（<a class="inline-link" href="https://github.com/qingsongcui" target="_blank" rel="noopener noreferrer">GitHub @qingsongcui</a> · <a class="inline-link" href="https://x.com/George_ONair" target="_blank" rel="noopener noreferrer">X @George_ONair</a>）创建与维护。本页全部路径均对照源码 <code>host_formats_v2.py</code>、<code>constants.py</code> 与 <a class="inline-link" href="./guide.html">本地运行指南</a> 核对。</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="guide-section" id="faq">
+      <span class="section-kicker">05 · TROUBLESHOOTING</span>
+      <h2>宿主配置常见问题</h2>
+      <div class="guide-faq">
+        <details>
+          <summary>为什么 9 类扩展宿主无法使用 /contextcore 跨 Agent 接力？<span aria-hidden="true">+</span></summary>
+          <p>每个工具的本地对话存储结构各异。只有 Claude Code、Codex、Cursor、Antigravity、OMP 与 OpenCode 六大核心宿主实现了对话增量索引、Worktree 消歧与 <code>/contextcore</code> 全文读取管线；其余 9 个扩展宿主仅接入配置格式转换与写前快照，官网不会将其包装为已打通接力。</p>
+        </details>
+        <details>
+          <summary>OpenCode 和 OpenClaw 在配置同步时最容易踩什么坑？<span aria-hidden="true">+</span></summary>
+          <p>OpenCode 的 <code>~/.config/opencode/opencode.json</code> 使用顶层 <code>mcp</code> 对象而非其他工具常见的 <code>mcpServers</code>；而 OpenClaw（<code>~/.openclaw/openclaw.json</code>）使用带注释的 JSON5 存储 <code>models.providers</code> 且不支持原生 MCP 同步，向其请求同步 MCP 会被直接拒绝。</p>
+        </details>
+        <details>
+          <summary>修改过 ~/.codex/config.toml 或 ~/.claude.json 会不会丢手动配置？<span aria-hidden="true">+</span></summary>
+          <p>不会。写入前工作台会自动落盘快照支持随时回滚；如果文件在工作台之外被编辑器或 CLI 自行改动过，再次同步时会触发差异对比弹窗，需人工确认差异后才会写回磁盘。</p>
+        </details>
+        <details>
+          <summary>如何在配置文件里确认接对的是 Senrelay 而不是同名包？<span aria-hidden="true">+</span></summary>
+          <p>Senrelay（仓库 <code>qingsongcui/ContextCore</code>）统一以 <code>contextcore</code> 作为宿主内的 MCP 键名，指向 <code>http://127.0.0.1:8420/mcp/</code>（不要写成 <code>senrelay-mcp</code>，也不要在 Python 中安装无关的 PyPI 包 <code>contextcore</code>）。</p>
+        </details>
+      </div>
+    </section>
+  </div>
+
+  <hr class="lang-divider">
+
+  <div data-guide-section="en" lang="en">
+    <div class="callout" role="note">
+      <div class="callout-title">Three Key Rules First</div>
+      <div class="callout-list">
+        <p><strong>No Universal Schema or Key</strong>Claude Code and Cursor expect JSON <code>mcpServers</code>, Codex uses TOML <code>[mcp_servers.*]</code>, OpenCode nests under <code>mcp</code> inside <code>opencode.json</code>, and OpenClaw rejects native MCP writes altogether—making raw symlinks brittle.</p>
+        <p><strong>Strict 6-Core vs. 9-Extended Split</strong>Only the 6 core hosts index transcripts and support <code>/contextcore</code> session relay. The 9 extended hosts support previewed config translation and rollback snapshots only (see <a class="inline-link" href="./compare.html">the 5-way comparison</a>).</p>
+        <p><strong>Apple Silicon Loopback &amp; Keychain</strong>Built strictly for Apple Silicon (<code>arm64</code>) macOS 14.0+—not Windows or Linux. API credentials remain in macOS Keychain and are stripped automatically from exports.</p>
+      </div>
+    </div>
+
+    <section class="guide-section" id="core-hosts">
+      <span class="section-kicker">01 · SIX CORE RELAY HOSTS</span>
+      <h2>6 Core Relay Hosts: Config Paths, Formats &amp; Caveats</h2>
+      <p>These six clients connect to both Senrelay's configuration manager and local conversation capture pipeline. Clicking One-Click Connect writes the <code>contextcore</code> entry pointing to <code>http://127.0.0.1:8420/mcp/</code> plus companion hooks and the <code>/contextcore</code> skill.</p>
+      <div class="host-matrix-wrap">
+        <table class="host-matrix-table">
+          <caption>Table 1 · Verified Config Paths Across the 6 Core Context Hosts (Checked 2026-11-15)</caption>
+          <thead>
+            <tr>
+              <th>Host (Surface)</th>
+              <th>MCP Path &amp; Format</th>
+              <th>Model / Provider / Hooks</th>
+              <th>Skill &amp; Prompt Paths</th>
+              <th>Verified Caveats</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <th scope="row">Claude Code<br><small>CLI</small></th>
+              <td><code>~/.claude.json</code><br><small>JSON · key <code>mcpServers</code></small></td>
+              <td><code>~/.claude/settings.json</code><br><small>Hooks &amp; provider env</small></td>
+              <td><code>~/.claude/skills/contextcore/SKILL.md</code><br><code>~/.claude/CLAUDE.md</code></td>
+              <td>Supports user and project rules together with native lifecycle hooks.</td>
+            </tr>
+            <tr>
+              <th scope="row">Codex<br><small>Desktop / CLI</small></th>
+              <td><code>~/.codex/config.toml</code><br><small>TOML · <code>[mcp_servers.contextcore]</code></small></td>
+              <td><code>~/.codex/config.toml</code><br><code>~/.codex/hooks.json</code></td>
+              <td><code>~/.codex/skills/contextcore/SKILL.md</code><br><code>~/.codex/AGENTS.md</code></td>
+              <td>Desktop and CLI share config files; repo <code>AGENTS.override.md</code> or custom <code>CODEX_HOME</code> can supersede globals.</td>
+            </tr>
+            <tr>
+              <th scope="row">Cursor<br><small>IDE / CLI</small></th>
+              <td><code>~/.cursor/mcp.json</code><br><small>JSON · key <code>mcpServers</code></small></td>
+              <td><code>~/.cursor/hooks.json</code></td>
+              <td><code>~/.cursor/skills/contextcore/SKILL.md</code></td>
+              <td>Cursor UI User Rules sit outside documented filesystem configs; <code>.mdc</code> rules require workspace project scope.</td>
+            </tr>
+            <tr>
+              <th scope="row">Antigravity<br><small>Desktop</small></th>
+              <td><code>~/.gemini/config/mcp_config.json</code><br><small>JSON · key <code>mcpServers</code></small></td>
+              <td><code>~/.gemini/config/hooks.json</code></td>
+              <td><code>~/.gemini/config/skills/contextcore/SKILL.md</code><br><code>~/.gemini/config/rules</code></td>
+              <td>Models are selected inside the Desktop menu; Senrelay never rewrites private Desktop auth caches.</td>
+            </tr>
+            <tr>
+              <th scope="row">OMP (Oh My Pi)<br><small>CLI</small></th>
+              <td><code>~/.omp/agent/mcp.json</code><br><small>JSON · key <code>mcpServers</code></small></td>
+              <td><code>~/.omp/agent/models.yml</code><br><code>~/.omp/agent/config.yml</code><br><code>~/.omp/agent/hooks/pre/contextcore.ts</code></td>
+              <td><code>~/.omp/agent/commands/contextcore.md</code><br><code>~/.omp/agent/AGENTS.md</code></td>
+              <td>Respects existing <code>.yaml</code> siblings; refuses mixed writes if un-migrated <code>settings.json</code> / <code>models.json</code> exist; task subagents skip root <code>AGENTS.md</code>.</td>
+            </tr>
+            <tr>
+              <th scope="row">OpenCode<br><small>CLI</small></th>
+              <td><code>~/.config/opencode/opencode.json</code><br><small>JSON · key <code>mcp</code> (not <code>mcpServers</code>)</small></td>
+              <td><code>~/.config/opencode/opencode.json</code><br><code>~/.config/opencode/plugins/contextcore.ts</code></td>
+              <td><code>~/.config/opencode/skills</code><br><code>~/.config/opencode/commands/contextcore.md</code></td>
+              <td>Single JSON houses providers and <code>mcp</code>; handled natively instead of using <code>mcpServers</code>.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="guide-section" id="extended-hosts">
+      <span class="section-kicker">02 · NINE EXTENDED CONFIG HOSTS</span>
+      <h2>9 Extended Hosts: Snapshot-Protected Config Sync Only</h2>
+      <p>These nine clients are strictly config-management targets in Senrelay: you get <strong>previewed writes, native format translation, and rollback snapshots</strong>, but <strong>no transcript capture and no <code>/contextcore</code> relay</strong>. Unsupported write requests fail closed rather than silently mangling host files:</p>
+      <div class="host-matrix-wrap">
+        <table class="host-matrix-table">
+          <caption>Table 2 · Verified Config Paths &amp; Explicit Exclusions Across 9 Extended Hosts</caption>
+          <thead>
+            <tr>
+              <th>Extended Host</th>
+              <th>MCP Path &amp; Format</th>
+              <th>Model / Provider File</th>
+              <th>Skills / Prompt Paths</th>
+              <th>Explicit Constraints</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <th scope="row">Claude Desktop</th>
+              <td><code>~/Library/Application Support/Claude/claude_desktop_config.json</code><br><small>JSON · <code>mcpServers</code></small></td>
+              <td>None (managed in Desktop app)</td>
+              <td>No managed skill/prompt directory</td>
+              <td>Syncs MCP endpoints only; no prompts or session relay.</td>
+            </tr>
+            <tr>
+              <th scope="row">Gemini CLI</th>
+              <td><code>~/.gemini/settings.json</code><br><small>JSON · <code>mcpServers</code></small></td>
+              <td>No provider rewrite</td>
+              <td>No managed skill/prompt directory</td>
+              <td>Local MCP entries and snapshots only.</td>
+            </tr>
+            <tr>
+              <th scope="row">Grok Build CLI</th>
+              <td><code>~/.grok/config.toml</code><br><small>TOML · <code>mcp_servers</code></small></td>
+              <td>Provider blocks read natively</td>
+              <td><code>~/.grok/skills</code><br><code>~/.grok/AGENTS.md</code></td>
+              <td>Global default model override is unsupported.</td>
+            </tr>
+            <tr>
+              <th scope="row">Kimi Code CLI</th>
+              <td><code>~/.kimi-code/mcp.json</code><br><small>JSON · <code>mcpServers</code></small></td>
+              <td><code>~/.kimi-code/config.toml</code><br><small>TOML</small></td>
+              <td><code>~/.kimi-code/skills</code><br><code>~/.kimi-code/AGENTS.md</code></td>
+              <td>Split JSON MCP + TOML provider files; config sync only.</td>
+            </tr>
+            <tr>
+              <th scope="row">MiniMax Code</th>
+              <td><code>~/.minimax/mcp.json</code><br><small>JSON · <code>mcpServers</code></small></td>
+              <td><code>~/.minimax/config.yaml</code><br><small>YAML</small></td>
+              <td><code>~/.minimax/skills</code><br><code>~/.minimax/AGENTS.md</code></td>
+              <td>JSON MCP + YAML provider files; config sync only.</td>
+            </tr>
+            <tr>
+              <th scope="row">Pi CLI</th>
+              <td><code>~/.pi/agent/mcp.json</code><br><small>JSON · <code>mcpServers</code></small></td>
+              <td><code>~/.pi/agent/models.json</code><br><code>~/.pi/agent/settings.json</code></td>
+              <td><code>~/.pi/agent/skills</code><br><code>~/.pi/agent/AGENTS.md</code></td>
+              <td>Strictly separate from OMP; refuses overwriting existing hand-authored JSON5 configs.</td>
+            </tr>
+            <tr>
+              <th scope="row">Hermes Agent</th>
+              <td><code>~/.hermes/config.yaml</code><br><small>YAML · <code>mcp_servers</code></small></td>
+              <td><code>~/.hermes/config.yaml</code><br><small><code>custom_providers</code></small></td>
+              <td><code>~/.hermes/skills</code><br><code>~/.hermes/SOUL.md</code></td>
+              <td>Global instructions target <code>SOUL.md</code> instead of <code>AGENTS.md</code>.</td>
+            </tr>
+            <tr>
+              <th scope="row">OpenClaw</th>
+              <td><strong>No native MCP sync</strong></td>
+              <td><code>~/.openclaw/openclaw.json</code><br><small>JSON5 (comments preserved) · <code>models.providers</code></small></td>
+              <td><code>~/.openclaw/skills</code><br><code>~/.openclaw/AGENTS.md</code></td>
+              <td>Rejects MCP sync attempts; preserves JSON5 comments during model/provider updates.</td>
+            </tr>
+            <tr>
+              <th scope="row">agy (Antigravity CLI)</th>
+              <td><code>~/.gemini/config/mcp_config.json</code><br><small>JSON · <code>mcpServers</code></small></td>
+              <td>Process env (<code>GEMINI_API_KEY</code>, <code>GOOGLE_GEMINI_BASE_URL</code>) &amp; private <code>.gemini/antigravity-cli/settings.json</code></td>
+              <td><code>~/.gemini/config/skills</code><br><code>~/.gemini/config/AGENTS.md</code></td>
+              <td>Separate target from Antigravity Desktop; credentials stay in env rather than plaintext files.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="guide-section" id="safety-model">
+      <span class="section-kicker">03 · WRITE GUARDS &amp; DISAMBIGUATION</span>
+      <h2>Safe Native Translation vs. Brittle Symlinks</h2>
+      <div class="boundary-list">
+        <div class="boundary-card">
+          <h3>Snapshots &amp; External-Edit Diff Checks</h3>
+          <p>Dotfile symlinks collapse across JSON, TOML, YAML, and JSON5—especially when agent clients overwrite runtime fields on startup. Senrelay stores timestamped snapshots before every write and stops to show a diff check whenever manual edits occurred outside the workbench.</p>
+        </div>
+        <div class="boundary-card">
+          <h3>Scoped Consent, Keychain Isolation &amp; Budget Guard</h3>
+          <p>Reading transcripts, writing host configs, and downloading optional local models require separate confirmations; startup never overwrites pre-installed host Skills. Secrets stay in macOS Keychain, and protected instruction blocks fail closed when over budget rather than truncating.</p>
+        </div>
+      </div>
+
+      <h3>Project &amp; Install Disambiguation</h3>
+      <p>When searching online, note that <strong>Senrelay</strong> (<a class="inline-link" href="https://github.com/qingsongcui/ContextCore" target="_blank" rel="noopener noreferrer">github.com/qingsongcui/ContextCore</a>) is unrelated to third-party projects named <code>context-core.dev</code> or the PyPI package <code>contextcore</code>. Install Senrelay (<code>v1.0.0-beta.2</code>, <code>$0</code> MIT License) on Apple Silicon macOS via Homebrew Cask and clear quarantine once:</p>
+      <pre class="code-block"><code><span class="code-comment"># 1. Install on Apple Silicon macOS 14.0+ via Homebrew Cask</span>
+brew install --cask qingsongcui/tap/senrelay
+
+<span class="code-comment"># 2. Clear ad-hoc Beta quarantine after moving to /Applications</span>
+xattr -cr /Applications/Senrelay.app
+
+<span class="code-comment"># 3. Confirm local loopback service health (desktop 8420 / source dev 18420)</span>
+curl -s http://127.0.0.1:8420/health</code></pre>
+      <p>If your team works on Windows or Linux, skip Senrelay and start with Git-committed <code>AGENTS.md</code> and <code>CLAUDE.md</code> ($0)—or read our <a class="inline-link" href="./compare.html">5-way context comparison</a> and <a class="inline-link" href="./relay-workflow.html">cross-agent relay guide</a>.</p>
+    </section>
+
+    <section class="guide-section" id="about-privacy">
+      <span class="section-kicker">04 · FACT SHEET &amp; ATTRIBUTION</span>
+      <h2>Scope Limits &amp; Author Attribution (Checked 2026-11-15)</h2>
+      <div class="boundary-list">
+        <div class="boundary-card">
+          <h3>Pricing &amp; Platform Boundaries</h3>
+          <p><strong>$0</strong> under the MIT License with zero signup. Built strictly for <code>macOS 14.0+</code> on Apple Silicon (<code>arm64</code>)—not suitable for Windows, Linux, Intel Macs, multi-machine cloud sync, or transcript relay on the 9 config-only extended hosts.</p>
+        </div>
+        <div class="boundary-card">
+          <h3>Maintainer &amp; Verification</h3>
+          <p>Built and maintained by <strong>Qingsong Cui (George O'Nair)</strong> (<a class="inline-link" href="https://github.com/qingsongcui" target="_blank" rel="noopener noreferrer">GitHub @qingsongcui</a> · <a class="inline-link" href="https://x.com/George_ONair" target="_blank" rel="noopener noreferrer">X @George_ONair</a>). Every file path above is checked against <code>host_formats_v2.py</code>, <code>constants.py</code>, and the <a class="inline-link" href="./guide.html">Setup Guide</a>.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="guide-section" id="faq">
+      <span class="section-kicker">05 · TROUBLESHOOTING</span>
+      <h2>Host Configuration FAQ</h2>
+      <div class="guide-faq">
+        <details>
+          <summary>Why are the 9 extended hosts excluded from /contextcore session relay?<span aria-hidden="true">+</span></summary>
+          <p>Each agent stores transcripts differently. Only Claude Code, Codex, Cursor, Antigravity, OMP, and OpenCode have verified session capture, worktree disambiguation, and paged transcript reading; the 9 extended targets offer previewed config sync and snapshots only.</p>
+        </details>
+        <details>
+          <summary>What are the biggest schema gotchas in OpenCode and OpenClaw?<span aria-hidden="true">+</span></summary>
+          <p>OpenCode stores servers inside top-level <code>mcp</code> inside <code>~/.config/opencode/opencode.json</code> instead of <code>mcpServers</code>. OpenClaw uses comment-preserving JSON5 (<code>~/.openclaw/openclaw.json</code>) for <code>models.providers</code> and explicitly rejects native MCP sync requests.</p>
+        </details>
+        <details>
+          <summary>Can syncing overwrite manual edits I made in ~/.claude.json or ~/.codex/config.toml?<span aria-hidden="true">+</span></summary>
+          <p>Before every write, Senrelay captures a rollback snapshot. If external changes occurred since the last sync, it presents a diff confirmation modal rather than blindly overwriting your edits.</p>
+        </details>
+        <details>
+          <summary>How do I verify my MCP config points to Senrelay instead of an unrelated package?<span aria-hidden="true">+</span></summary>
+          <p>Each supported host registers the MCP key <code>contextcore</code> pointing to <code>http://127.0.0.1:8420/mcp/</code>. Never use <code>senrelay-mcp</code> and never run <code>pip install contextcore</code> from PyPI (unrelated project).</p>
+        </details>
+      </div>
+    </section>
+  </div>
+</main>
+
+<footer class="footer wrap">
+<a class="brand" href="./" aria-label="Senrelay 续境首页" data-aria-zh="Senrelay 续境首页" data-aria-en="Senrelay home"><img class="brand-symbol" src="./assets/senrelay-logo-display-v1.png" width="26" height="33" loading="lazy" decoding="async" alt="" aria-hidden="true">Senrelay<span class="brand-cn" data-zh="· 续境" data-en="">· 续境</span></a>
+<p>New agent. Same thread.</p>
+<div>
+  <a href="./" data-zh="首页" data-en="Home">首页</a>
+  <a href="./relay-workflow.html" data-zh="接力流程" data-en="Relay Workflow">接力流程</a>
+  <a href="./compare.html" data-zh="方案对比" data-en="Compare">方案对比</a>
+  <a href="./guide.html" data-zh="运行指南" data-en="Setup Guide">运行指南</a>
+  <a href="https://github.com/qingsongcui/ContextCore" target="_blank" rel="noopener noreferrer">GitHub ↗<span class="sr-only" data-zh="（新窗口）" data-en="(opens in a new window)">（新窗口）</span></a>
+  <a href="https://github.com/qingsongcui/ContextCore/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">MIT License<span class="sr-only" data-zh="（新窗口）" data-en="(opens in a new window)">（新窗口）</span></a>
+  <a href="#main" data-zh="回到顶部 ↑" data-en="Back to top ↑">回到顶部 ↑</a>
+</div>
+</footer>
+<script type="module">
+  const LANG_KEY = 'senrelay.website.language';
+  const root = document.documentElement;
+  const docDefaultLang = (root.getAttribute('lang') || '').toLowerCase().startsWith('en') ? 'en' : 'zh';
+  const hasBothSections = Boolean(document.querySelector('[data-guide-section="zh"]') && document.querySelector('[data-guide-section="en"]'));
+  const zhTitle = document.title;
+  const brandPrefix = zhTitle.split('—')[0].trim().replace(/\s*·\s*.*$/, '') || 'Senrelay';
+  const enTitle = `${brandPrefix} — MCP & Skills Config Paths Across 15 Agents`;
+  const metaDesc = document.querySelector('meta[name="description"]');
+  const zhDesc = metaDesc ? metaDesc.getAttribute('content') : '';
+  const enDesc = 'Verified MCP, Skills, and rule config paths across 15 AI coding agents (JSON, TOML, JSON5, YAML) with rollback snapshots and strict 6+9 boundaries.';
+
+  function detectLanguage() {
+    const override = new URLSearchParams(window.location.search).get('lang');
+    if (override === 'zh' || override === 'en') return override;
+    if (!hasBothSections) return docDefaultLang;
+    try {
+      const stored = window.localStorage.getItem(LANG_KEY);
+      if (stored === 'zh' || stored === 'en') return stored;
+    } catch { /* Storage is optional. */ }
+    return docDefaultLang;
+  }
+
+  let language = detectLanguage();
+
+  function syncGuideControls(lang) {
+    document.querySelectorAll('[data-lang]').forEach(ctrl => {
+      const active = ctrl.dataset.lang === lang;
+      if (ctrl.hasAttribute('href') || ctrl.tagName === 'A') {
+        if (active) ctrl.setAttribute('aria-current', 'page');
+        else ctrl.removeAttribute('aria-current');
+      }
+      if (ctrl.hasAttribute('aria-pressed') || ctrl.tagName === 'BUTTON') {
+        ctrl.setAttribute('aria-pressed', String(active));
+      }
+    });
+    const group = document.querySelector('.language-switch');
+    if (group) group.setAttribute('aria-label', lang === 'en' ? 'Language' : '语言');
+  }
+
+  function applyGuideLanguage(lang) {
+    if (hasBothSections) {
+      root.lang = lang === 'en' ? 'en' : 'zh-CN';
+      root.dataset.guideLang = lang;
+      document.title = lang === 'en' ? enTitle : zhTitle;
+      if (metaDesc) metaDesc.setAttribute('content', lang === 'en' ? enDesc : zhDesc);
+      document.querySelectorAll('[data-guide-section]').forEach(section => {
+        section.hidden = section.dataset.guideSection !== lang;
+      });
+      document.querySelectorAll('[data-zh][data-en]').forEach(el => {
+        el.textContent = lang === 'en' ? el.dataset.en : el.dataset.zh;
+      });
+      document.querySelectorAll('[data-aria-zh][data-aria-en]').forEach(el => {
+        el.setAttribute('aria-label', lang === 'en' ? el.dataset.ariaEn : el.dataset.ariaZh);
+      });
+    } else {
+      root.dataset.guideLang = docDefaultLang;
+    }
+    syncGuideControls(hasBothSections ? lang : docDefaultLang);
+  }
+
+  function setGuideLanguage(next) {
+    if ((next !== 'zh' && next !== 'en') || next === language) return;
+    language = next;
+    try { window.localStorage.setItem(LANG_KEY, next); } catch { /* Storage is optional. */ }
+    try {
+      const url = new URL(window.location.href);
+      if (url.searchParams.has('lang')) {
+        url.searchParams.delete('lang');
+        window.history.replaceState(null, '', url);
+      }
+    } catch { /* ignore */ }
+    applyGuideLanguage(next);
+  }
+
+  root.classList.add('has-js');
+  if (!hasBothSections && language !== docDefaultLang) {
+    const targetCtrl = document.querySelector(`[data-lang="${language}"]`);
+    const targetHref = targetCtrl && targetCtrl.getAttribute('href');
+    if (targetHref) window.location.replace(targetHref);
+  }
+  document.querySelectorAll('[data-lang]').forEach(ctrl => {
+    ctrl.addEventListener('click', event => {
+      const next = ctrl.dataset.lang;
+      if (next !== 'zh' && next !== 'en') return;
+      try { window.localStorage.setItem(LANG_KEY, next); } catch { /* Storage is optional. */ }
+      if (!hasBothSections) {
+        if (next === docDefaultLang) event.preventDefault();
+        return;
+      }
+      if (!event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
+        event.preventDefault();
+        setGuideLanguage(next);
+      }
+    });
+  });
+  applyGuideLanguage(language);
+</script>
+</body>
+</html>
