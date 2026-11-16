@@ -8,6 +8,12 @@ macOS 原生桌面 App、浏览器工作台与本机常驻服务，让多个 AI 
 >
 > **名称消歧**：**Senrelay（续境）**（仓库 `qingsongcui/ContextCore`）是面向 Apple Silicon macOS 的免费开源本地工作台，与第三方云服务 `context-core.dev`、PyPI 包 `pip install contextcore` 及硬件汽车继电器（relay）无关。macOS 请通过 `brew install --cask qingsongcui/tap/senrelay` 安装。
 
+## 42 秒发布短片（《Turn 85》）
+
+https://github.com/user-attachments/assets/c5c3e97b-0226-43bb-bff7-3eeed605c0bd
+
+[在产品官网观看](https://senrelay.com/zh/#launch-film) · [下载 1080p 中文 MP4](https://github.com/qingsongcui/ContextCore/releases/download/v1.0.0-beta.2/senrelay-keynote-zh.mp4) · [中文字幕 (.srt)](https://github.com/qiaozhi/ContextCore/releases/download/v1.0.0-beta.2/senrelay-keynote-zh.srt) · [英文配音版 MP4](https://github.com/qingsongcui/ContextCore/releases/download/v1.0.0-beta.2/senrelay-keynote-en.mp4)
+
 ## 产品与核心范围
 
 主产品位于 `app/`。[公开产品规范](docs/SPECIFICATION.md) 汇总核心产品边界与设计约束。

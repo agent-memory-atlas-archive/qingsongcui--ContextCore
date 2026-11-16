@@ -8,6 +8,12 @@ A native macOS app, browser workbench, and local background service that lets mu
 >
 > **Disambiguation**: **Senrelay（续境）** (`qingsongcui/ContextCore`) is a local Apple Silicon macOS developer workbench. It is unrelated to third-party services at `context-core.dev`, public PyPI `pip install contextcore`, or hardware automotive relays. Install via `brew install --cask qingsongcui/tap/senrelay`.
 
+## 42-Second Launch Film ("Turn 85")
+
+https://github.com/user-attachments/assets/836bb4e6-1238-4c9f-9120-e2781e5de06e
+
+[Watch on senrelay.com](https://senrelay.com/#launch-film) · [Download 1080p MP4](https://github.com/qingsongcui/ContextCore/releases/download/v1.0.0-beta.2/senrelay-keynote-en.mp4) · [English Captions (.srt)](https://github.com/qingsongcui/ContextCore/releases/download/v1.0.0-beta.2/senrelay-keynote-en.srt)
+
 ## Product and scope
 
 The active product lives in `app/`. The [public specification](docs/SPECIFICATION.md) summarizes confirmed product requirements and boundaries.
