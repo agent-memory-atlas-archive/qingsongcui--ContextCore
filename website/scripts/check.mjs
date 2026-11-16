@@ -4,31 +4,42 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const root = fileURLToPath(new URL('../dist/', import.meta.url));
-const html = await readFile(path.join(root, 'index.html'), 'utf8');
-const enHtml = await readFile(path.join(root, 'en/index.html'), 'utf8');
-const guide = await readFile(path.join(root, 'guide.html'), 'utf8');
-const enGuide = await readFile(path.join(root, 'en/guide.html'), 'utf8');
-const compare = await readFile(path.join(root, 'compare.html'), 'utf8');
-const enCompare = await readFile(path.join(root, 'en/compare.html'), 'utf8');
-const hosts = await readFile(path.join(root, 'hosts.html'), 'utf8');
-const enHosts = await readFile(path.join(root, 'en/hosts.html'), 'utf8');
-const relay = await readFile(path.join(root, 'relay-workflow.html'), 'utf8');
-const enRelay = await readFile(path.join(root, 'en/relay-workflow.html'), 'utf8');
+const enHtml = await readFile(path.join(root, 'index.html'), 'utf8');
+const html = await readFile(path.join(root, 'zh/index.html'), 'utf8');
+const enGuide = await readFile(path.join(root, 'guide.html'), 'utf8');
+const guide = await readFile(path.join(root, 'zh/guide.html'), 'utf8');
+const enCompare = await readFile(path.join(root, 'compare.html'), 'utf8');
+const compare = await readFile(path.join(root, 'zh/compare.html'), 'utf8');
+const enHosts = await readFile(path.join(root, 'hosts.html'), 'utf8');
+const hosts = await readFile(path.join(root, 'zh/hosts.html'), 'utf8');
+const enRelay = await readFile(path.join(root, 'relay-workflow.html'), 'utf8');
+const relay = await readFile(path.join(root, 'zh/relay-workflow.html'), 'utf8');
+const legacyEnHome = await readFile(path.join(root, 'en/index.html'), 'utf8');
+const legacyEnGuide = await readFile(path.join(root, 'en/guide.html'), 'utf8');
+const legacyEnCompare = await readFile(path.join(root, 'en/compare.html'), 'utf8');
+const legacyEnHosts = await readFile(path.join(root, 'en/hosts.html'), 'utf8');
+const legacyEnRelay = await readFile(path.join(root, 'en/relay-workflow.html'), 'utf8');
 const notFound = await readFile(path.join(root, '404.html'), 'utf8');
 const llms = await readFile(path.join(root, 'llms.txt'), 'utf8');
 const llmsFull = await readFile(path.join(root, 'llms-full.txt'), 'utf8');
+const pricingMd = await readFile(path.join(root, 'pricing.md'), 'utf8');
+const indexMd = await readFile(path.join(root, 'index.md'), 'utf8');
+const guideMd = await readFile(path.join(root, 'guide.md'), 'utf8');
+const compareMd = await readFile(path.join(root, 'compare.md'), 'utf8');
+const hostsMd = await readFile(path.join(root, 'hosts.md'), 'utf8');
+const relayMd = await readFile(path.join(root, 'relay-workflow.md'), 'utf8');
 
 for (const [label, doc, expectedLangAttr] of [
-  ['index.html', html, '<html lang="zh-CN">'],
-  ['en/index.html', enHtml, '<html lang="en" data-static-locale="en">'],
-  ['guide.html', guide, '<html lang="zh-CN">'],
-  ['en/guide.html', enGuide, '<html lang="en">'],
-  ['compare.html', compare, '<html lang="zh-CN">'],
-  ['en/compare.html', enCompare, '<html lang="en">'],
-  ['hosts.html', hosts, '<html lang="zh-CN">'],
-  ['en/hosts.html', enHosts, '<html lang="en">'],
-  ['relay-workflow.html', relay, '<html lang="zh-CN">'],
-  ['en/relay-workflow.html', enRelay, '<html lang="en">'],
+  ['index.html', enHtml, '<html lang="en" data-static-locale="en">'],
+  ['zh/index.html', html, '<html lang="zh-CN" data-static-locale="zh">'],
+  ['guide.html', enGuide, '<html lang="en">'],
+  ['zh/guide.html', guide, '<html lang="zh-CN">'],
+  ['compare.html', enCompare, '<html lang="en">'],
+  ['zh/compare.html', compare, '<html lang="zh-CN">'],
+  ['hosts.html', enHosts, '<html lang="en">'],
+  ['zh/hosts.html', hosts, '<html lang="zh-CN">'],
+  ['relay-workflow.html', enRelay, '<html lang="en">'],
+  ['zh/relay-workflow.html', relay, '<html lang="zh-CN">'],
 ]) {
   assert.equal((doc.match(/<h1\b/g) || []).length, 1, `exactly one h1 in ${label}`);
   assert.ok(doc.includes(expectedLangAttr), `expected lang attribute in ${label}`);
@@ -48,16 +59,16 @@ assert.match(css, /prefers-reduced-motion/);
 assert.match(css, /focus-visible/);
 
 for (const [label, doc] of [
-  ['index.html', html],
-  ['en/index.html', enHtml],
-  ['guide.html', guide],
-  ['en/guide.html', enGuide],
-  ['compare.html', compare],
-  ['en/compare.html', enCompare],
-  ['hosts.html', hosts],
-  ['en/hosts.html', enHosts],
-  ['relay-workflow.html', relay],
-  ['en/relay-workflow.html', enRelay],
+  ['index.html', enHtml],
+  ['zh/index.html', html],
+  ['guide.html', enGuide],
+  ['zh/guide.html', guide],
+  ['compare.html', enCompare],
+  ['zh/compare.html', compare],
+  ['hosts.html', enHosts],
+  ['zh/hosts.html', hosts],
+  ['relay-workflow.html', enRelay],
+  ['zh/relay-workflow.html', relay],
 ]) {
   const ids = [...doc.matchAll(/\bid="([^"]+)"/g)].map((m) => m[1]);
   assert.equal(ids.length, new Set(ids).size, `IDs unique in ${label}`);
@@ -69,10 +80,11 @@ for (const [label, doc] of [
   }
 }
 
-for (const [pageLabel, pageDoc] of [['index.html', html], ['guide.html', guide], ['compare.html', compare], ['hosts.html', hosts], ['relay-workflow.html', relay]]) {
+for (const [pageLabel, pageDoc] of [['index.html', enHtml], ['guide.html', enGuide], ['compare.html', enCompare], ['hosts.html', enHosts], ['relay-workflow.html', enRelay]]) {
   for (const [, asset] of pageDoc.matchAll(/(?:href|src)="\.\/([^"\s]*)"/g)) {
     const [relPath, hash] = asset.split('#');
-    const targetPath = path.join(root, relPath || 'index.html');
+    let targetPath = path.join(root, relPath || 'index.html');
+    if (relPath.endsWith('/')) targetPath = path.join(targetPath, 'index.html');
     await access(targetPath);
     if (hash && targetPath.endsWith('.html')) {
       const targetDoc = await readFile(targetPath, 'utf8');
@@ -80,10 +92,10 @@ for (const [pageLabel, pageDoc] of [['index.html', html], ['guide.html', guide],
     }
   }
 }
-for (const [pageLabel, pageDoc] of [['en/index.html', enHtml], ['en/guide.html', enGuide], ['en/compare.html', enCompare], ['en/hosts.html', enHosts], ['en/relay-workflow.html', enRelay]]) {
+for (const [pageLabel, pageDoc] of [['zh/index.html', html], ['zh/guide.html', guide], ['zh/compare.html', compare], ['zh/hosts.html', hosts], ['zh/relay-workflow.html', relay]]) {
   for (const [, asset] of pageDoc.matchAll(/(?:href|src)="(\.\.?\/[^"\s]*)"/g)) {
     const [relPath, hash] = asset.split('#');
-    let resolved = path.resolve(root, 'en', relPath || 'index.html');
+    let resolved = path.resolve(root, 'zh', relPath || 'index.html');
     if (relPath === './' || relPath === '../' || relPath.endsWith('/')) {
       resolved = path.join(resolved, 'index.html');
     }
@@ -93,6 +105,31 @@ for (const [pageLabel, pageDoc] of [['en/index.html', enHtml], ['en/guide.html',
       assert.ok(targetDoc.includes(`id="${hash}"`), `cross-page anchor #${hash} from ${pageLabel} exists in ${resolved}`);
     }
   }
+}
+
+for (const [stubLabel, stubDoc, expectedRelTarget] of [
+  ['en/index.html', legacyEnHome, '../'],
+  ['en/guide.html', legacyEnGuide, '../guide.html'],
+  ['en/compare.html', legacyEnCompare, '../compare.html'],
+  ['en/hosts.html', legacyEnHosts, '../hosts.html'],
+  ['en/relay-workflow.html', legacyEnRelay, '../relay-workflow.html'],
+]) {
+  assert.match(stubDoc, /http-equiv="refresh"/, `${stubLabel} includes meta refresh`);
+  assert.ok(stubDoc.includes('window.location.replace') && stubDoc.includes('window.location.hash'), `${stubLabel} preserves query & hash on redirect`);
+  assert.ok(stubDoc.includes(`href="${expectedRelTarget}"`), `${stubLabel} links to ${expectedRelTarget}`);
+}
+
+for (const [mdLabel, mdDoc] of [
+  ['pricing.md', pricingMd],
+  ['index.md', indexMd],
+  ['guide.md', guideMd],
+  ['compare.md', compareMd],
+  ['hosts.md', hostsMd],
+  ['relay-workflow.md', relayMd],
+]) {
+  assert.ok(mdDoc.includes('$0') && mdDoc.includes('MIT'), `${mdLabel} includes $0 MIT pricing`);
+  assert.ok(mdDoc.includes('1.0.0-beta.2'), `${mdLabel} includes current version`);
+  assert.ok(!/<(?:div|table|section|script|svg)\b/i.test(mdDoc), `${mdLabel} contains clean Markdown without raw HTML containers`);
 }
 
 await access(path.join(root, 'favicon.ico'));
@@ -111,13 +148,23 @@ try {
 assert.equal(socialPngExists, false, 'unreachable duplicate social.png excluded from dist');
 
 await access(path.join(root, 'guide.html'));
+await access(path.join(root, 'zh/guide.html'));
 await access(path.join(root, 'en/guide.html'));
 await access(path.join(root, 'compare.html'));
+await access(path.join(root, 'zh/compare.html'));
 await access(path.join(root, 'en/compare.html'));
 await access(path.join(root, 'hosts.html'));
+await access(path.join(root, 'zh/hosts.html'));
 await access(path.join(root, 'en/hosts.html'));
 await access(path.join(root, 'relay-workflow.html'));
+await access(path.join(root, 'zh/relay-workflow.html'));
 await access(path.join(root, 'en/relay-workflow.html'));
+await access(path.join(root, 'pricing.md'));
+await access(path.join(root, 'index.md'));
+await access(path.join(root, 'guide.md'));
+await access(path.join(root, 'compare.md'));
+await access(path.join(root, 'hosts.md'));
+await access(path.join(root, 'relay-workflow.md'));
 await access(path.join(root, '404.html'));
 await access(path.join(root, 'llms.txt'));
 await access(path.join(root, 'llms-full.txt'));
@@ -227,21 +274,21 @@ assert.equal(enCompareGraph['@graph'][2].mainEntity.length, 6, 'six FAQ entities
 
 // SEO / GEO Baseline & Anti-Regression Veto Guardrails (Titles <=60 chars, Meta descriptions tight, Version aligned to v1.0.0-beta.2, 4-Element Hero, Plain-Text $0 Pricing, Dated Fact Sheet, Real Limitations, Creator E-E-A-T, Internal Links & Content Floor)
 for (const [label, doc] of [
-  ['index.html', html],
-  ['en/index.html', enHtml],
-  ['guide.html', guide],
-  ['en/guide.html', enGuide],
-  ['compare.html', compare],
-  ['en/compare.html', enCompare],
-  ['hosts.html', hosts],
-  ['en/hosts.html', enHosts],
-  ['relay-workflow.html', relay],
-  ['en/relay-workflow.html', enRelay],
+  ['index.html', enHtml],
+  ['zh/index.html', html],
+  ['guide.html', enGuide],
+  ['zh/guide.html', guide],
+  ['compare.html', enCompare],
+  ['zh/compare.html', compare],
+  ['hosts.html', enHosts],
+  ['zh/hosts.html', hosts],
+  ['relay-workflow.html', enRelay],
+  ['zh/relay-workflow.html', relay],
 ]) {
   const titleText = doc.match(/<title>(.*?)<\/title>/s)[1].replace(/&amp;/g, '&').trim();
   assert.ok(titleText.length >= 20 && titleText.length <= 60, `title length (${titleText.length}) must be 20..60 chars in ${label}: "${titleText}"`);
   const descText = doc.match(/<meta name="description" content="([^"]*)"/)[1];
-  if (label.startsWith('en/')) {
+  if (!label.startsWith('zh/')) {
     assert.ok(descText.length >= 80 && descText.length <= 155, `EN meta description length (${descText.length}) must be 80..155 chars in ${label}`);
   } else {
     assert.ok(descText.length >= 45 && descText.length <= 90, `ZH meta description length (${descText.length}) must be 45..90 chars in ${label}: "${descText}"`);
@@ -305,6 +352,8 @@ assert.match(enRelay, /class="language-switch"/);
 const llmsSummaryLine = llms.split('\n').find((line) => line.startsWith('> '));
 assert.ok(llmsSummaryLine && !cjk.test(llmsSummaryLine), 'llms.txt blockquote summary is pure English');
 assert.match(llms, /context-core\.dev/);
+assert.match(llms, /pricing\.md/);
+assert.match(llms, /hosts\.md/);
 assert.match(llms, /hosts\.html/);
 assert.match(llms, /relay-workflow\.html/);
 assert.match(llms, /brew install --cask qingsongcui\/tap\/senrelay/);
@@ -322,9 +371,10 @@ assert.ok(!llmsFull.includes('1.0.0-beta.1'), 'llms-full.txt has no stale beta.1
 assert.ok(!llmsFull.includes('💡') && !llmsFull.includes('📌'), 'no decorative emojis in llms-full.txt');
 assert.ok(!llmsFull.includes('6-point'), 'no stale 6-point handoff card reference in llms-full.txt');
 
-const production = html.includes('content="index, follow"');
+const production = enHtml.includes('content="index, follow"');
 const expectedClarityId = (process.env.CLARITY_ID || '').trim();
-const deployedDocs = [html, enHtml, guide, enGuide, compare, enCompare, hosts, enHosts, relay, enRelay];
+const deployedDocs = [enHtml, html, enGuide, guide, enCompare, compare, enHosts, hosts, enRelay, relay];
+const legacyRedirects = [legacyEnHome, legacyEnGuide, legacyEnCompare, legacyEnHosts, legacyEnRelay];
 if (production) {
   for (const doc of deployedDocs) {
     assert.match(doc, /content="index, follow"/);
@@ -333,6 +383,7 @@ if (production) {
     assert.match(doc, /hreflang="zh"/);
     assert.match(doc, /hreflang="en"/);
     assert.match(doc, /hreflang="x-default"/);
+    assert.match(doc, /type="text\/markdown"/);
     assert.match(doc, /property="og:image"/);
     assert.match(doc, /property="og:image:width" content="1536"/);
     if (expectedClarityId) {
@@ -344,15 +395,21 @@ if (production) {
       assert.ok(!doc.includes('https://www.clarity.ms/tag/'), 'no Clarity tag injected when CLARITY_ID unset');
     }
   }
+  for (const stub of legacyRedirects) {
+    assert.match(stub, /content="noindex, follow"/);
+    assert.match(stub, /rel="canonical"/);
+  }
   const sitemap = await readFile(path.join(root, 'sitemap.xml'), 'utf8');
   assert.match(sitemap, /xmlns:xhtml="http:\/\/www\.w3\.org\/1999\/xhtml"/);
   assert.equal((sitemap.match(/<url>/g) || []).length, 10, 'ten canonical URLs in sitemap.xml');
-  assert.equal((sitemap.match(/<lastmod>\d{4}-\d{2}-\d{2}<\/lastmod>/g) || []).length, 10, 'valid lastmod dates');
-  assert.ok(sitemap.includes('<lastmod>2026-11-15</lastmod>'), 'sitemap lastmod aligned to 2026-11-15');
-  assert.ok(sitemap.includes('/hosts.html') && sitemap.includes('/relay-workflow.html'), 'sitemap includes new technical guide URLs');
+  const lastmods = [...sitemap.matchAll(/<lastmod>(\d{4}-\d{2}-\d{2})<\/lastmod>/g)].map((m) => m[1]);
+  assert.equal(lastmods.length, 10, 'valid lastmod dates');
+  assert.ok(lastmods.every((d) => d >= '2026-11-15'), 'sitemap lastmod dates >= 2026-11-15');
+  assert.ok(sitemap.includes('/hosts.html') && sitemap.includes('/zh/hosts.html') && sitemap.includes('/relay-workflow.html'), 'sitemap includes English root and /zh/ URLs');
+  assert.ok(!sitemap.includes('/en/'), 'sitemap excludes legacy /en/ redirect URLs');
   assert.match(sitemap, /xhtml:link rel="alternate" hreflang="en"/);
   const robots = await readFile(path.join(root, 'robots.txt'), 'utf8');
-  for (const bot of ['Googlebot', 'OAI-SearchBot', 'GPTBot', 'ClaudeBot', 'PerplexityBot', 'Google-Extended', 'Applebot-Extended', 'Bytespider', 'Baiduspider']) {
+  for (const bot of ['Googlebot', 'Bravebot', 'DuckAssistBot', 'OAI-SearchBot', 'GPTBot', 'ClaudeBot', 'PerplexityBot', 'Google-Extended', 'Applebot-Extended', 'Bytespider', 'Baiduspider']) {
     assert.ok(robots.includes(`User-agent: ${bot}`), `robots.txt explicitly declares ${bot}`);
   }
   assert.match(robots, /Sitemap: /);
@@ -361,6 +418,10 @@ if (production) {
     assert.match(doc, /content="noindex, nofollow"/);
     assert.ok(!doc.includes('rel="canonical"'));
     assert.ok(!doc.includes('https://www.clarity.ms/tag/'), 'no analytics in preview builds');
+  }
+  for (const stub of legacyRedirects) {
+    assert.match(stub, /content="noindex, nofollow"/);
+    assert.ok(!stub.includes('rel="canonical"'));
   }
   assert.equal((await readFile(path.join(root, 'robots.txt'), 'utf8')).trim(), 'User-agent: *\nDisallow: /');
 }

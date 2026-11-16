@@ -14,7 +14,7 @@ try {
   await writeFile(path.join(temp, 'brand.config.mjs'), config);
   let result = spawnSync(process.execPath, [path.join(temp, 'scripts/build.mjs')], { env: { ...process.env, SITE_URL: '' }, encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr);
-  const html = await readFile(path.join(temp, 'dist/index.html'), 'utf8');
+  const html = await readFile(path.join(temp, 'dist/zh/index.html'), 'utf8');
   assert.match(html, /<title>Renamed Context · 改名境 —/);
   assert.ok(html.includes('href="https://github.com/qingsongcui/ContextCore"'));
   assert.ok(html.includes('href="https://github.com/qingsongcui/ContextCore/blob/main/LICENSE"'));
@@ -22,25 +22,25 @@ try {
   assert.ok(!html.includes('>Senrelay<'));
   assert.ok(!html.includes('为什么 Senrelay'));
 
-  const enHtml = await readFile(path.join(temp, 'dist/en/index.html'), 'utf8');
+  const enHtml = await readFile(path.join(temp, 'dist/index.html'), 'utf8');
   assert.match(enHtml, /<title>Renamed Context —/);
   assert.ok(!enHtml.includes('>Senrelay<'));
 
-  const guide = await readFile(path.join(temp, 'dist/guide.html'), 'utf8');
+  const guide = await readFile(path.join(temp, 'dist/zh/guide.html'), 'utf8');
   assert.ok(guide.includes('Renamed Context'));
   assert.ok(guide.includes('改名境'));
   assert.ok(!guide.includes('Senrelay · 续境'));
 
-  const enGuide = await readFile(path.join(temp, 'dist/en/guide.html'), 'utf8');
+  const enGuide = await readFile(path.join(temp, 'dist/guide.html'), 'utf8');
   assert.match(enGuide, /<title>Renamed Context — Local Setup &amp; Workflow Guide<\/title>/);
   assert.ok(!enGuide.includes('Senrelay —'));
 
-  const compare = await readFile(path.join(temp, 'dist/compare.html'), 'utf8');
+  const compare = await readFile(path.join(temp, 'dist/zh/compare.html'), 'utf8');
   assert.ok(compare.includes('Renamed Context'));
   assert.ok(compare.includes('改名境'));
   assert.ok(!compare.includes('Senrelay · 续境'));
 
-  const enCompare = await readFile(path.join(temp, 'dist/en/compare.html'), 'utf8');
+  const enCompare = await readFile(path.join(temp, 'dist/compare.html'), 'utf8');
   assert.match(enCompare, /<title>Renamed Context — 5 Ways to Share AI Agent Context \(2026\)<\/title>/);
   assert.ok(!enCompare.includes('Senrelay —'));
 
@@ -48,15 +48,18 @@ try {
     ['hosts.html', '<title>Renamed Context — MCP &amp; Skills Config Paths Across 15 Agents</title>'],
     ['relay-workflow.html', '<title>Renamed Context — Cross-Agent Relay Workflow: Claude to Codex</title>'],
   ]) {
-    const zhDoc = await readFile(path.join(temp, 'dist', docFile), 'utf8');
+    const zhDoc = await readFile(path.join(temp, 'dist/zh', docFile), 'utf8');
     assert.ok(zhDoc.includes('Renamed Context'), `${docFile} brand updated`);
     assert.ok(zhDoc.includes('改名境'), `${docFile} chineseName updated`);
     assert.ok(!zhDoc.includes('Senrelay · 续境'), `${docFile} has no stale brand`);
 
-    const enDoc = await readFile(path.join(temp, 'dist/en', docFile), 'utf8');
-    assert.ok(enDoc.includes(enExpectedTitle), `en/${docFile} title updated`);
-    assert.ok(!enDoc.includes('Senrelay —'), `en/${docFile} has no stale brand`);
+    const enDoc = await readFile(path.join(temp, 'dist', docFile), 'utf8');
+    assert.ok(enDoc.includes(enExpectedTitle), `${docFile} title updated`);
+    assert.ok(!enDoc.includes('Senrelay —'), `${docFile} has no stale brand`);
   }
+
+  const pricingMd = await readFile(path.join(temp, 'dist/pricing.md'), 'utf8');
+  assert.ok(pricingMd.includes('Renamed Context') && !pricingMd.includes('Senrelay ('));
 
   const notFound = await readFile(path.join(temp, 'dist/404.html'), 'utf8');
   assert.ok(notFound.includes('Renamed Context'));

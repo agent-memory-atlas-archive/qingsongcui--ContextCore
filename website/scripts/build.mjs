@@ -8,7 +8,7 @@ import { bundleCss } from './css-bundle.mjs';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const out = path.join(root, 'dist');
 const RELEASE_VERSION = '1.0.0-beta.2';
-const FALLBACK_LASTMOD = '2026-11-15';
+const FALLBACK_LASTMOD = '2026-11-16';
 const rawClarityId = (process.env.CLARITY_ID || '').trim();
 if (rawClarityId && !/^[a-zA-Z0-9]{6,24}$/.test(rawClarityId)) {
   throw new Error(`Invalid CLARITY_ID: ${rawClarityId}`);
@@ -572,17 +572,20 @@ function renderAnalyticsHeadTags() {
   return tags;
 }
 
-function renderDeploymentHead({ canonicalHref, zhHref, enHref, altOgLocale, imageAlt }) {
+function renderDeploymentHead({ canonicalHref, zhHref, enHref, mdHref, altOgLocale, imageAlt }) {
   if (!site) return '';
   const socialImg = escapeHtml(new URL('assets/social-original-v1.png', site).href);
   const llmsHref = escapeHtml(new URL('llms.txt', site).href);
   const llmsFullHref = escapeHtml(new URL('llms-full.txt', site).href);
+  const pricingMdHref = escapeHtml(new URL('pricing.md', site).href);
   return [
     `<link rel="canonical" href="${escapeHtml(canonicalHref)}">`,
     `<link rel="alternate" hreflang="zh-CN" href="${escapeHtml(zhHref)}">`,
     `<link rel="alternate" hreflang="zh" href="${escapeHtml(zhHref)}">`,
     `<link rel="alternate" hreflang="en" href="${escapeHtml(enHref)}">`,
     `<link rel="alternate" hreflang="x-default" href="${escapeHtml(enHref)}">`,
+    ...(mdHref ? [`<link rel="alternate" type="text/markdown" href="${escapeHtml(mdHref)}" title="Markdown Mirror">`] : []),
+    `<link rel="alternate" type="text/markdown" href="${pricingMdHref}" title="Pricing &amp; License (Markdown)">`,
     `<link rel="alternate" type="text/plain" href="${llmsHref}" title="LLMs.txt">`,
     `<link rel="alternate" type="text/plain" href="${llmsFullHref}" title="LLMs-full.txt">`,
     `<meta property="og:locale:alternate" content="${escapeHtml(altOgLocale)}">`,
@@ -597,8 +600,176 @@ function renderDeploymentHead({ canonicalHref, zhHref, enHref, altOgLocale, imag
   ].join('\n  ');
 }
 
+function renderLegacyEnRedirect({ enTitle, targetCanonical, relTarget }) {
+  const robotsValue = site ? 'noindex, follow' : 'noindex, nofollow';
+  const refreshTarget = site ? targetCanonical : relTarget;
+  const canonicalTag = site ? `\n  <link rel="canonical" href="${escapeHtml(targetCanonical)}">` : '';
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#121412">
+  <meta name="robots" content="${robotsValue}">${canonicalTag}
+  <meta http-equiv="refresh" content="0; url=${escapeHtml(refreshTarget)}">
+  <title>${escapeHtml(enTitle)}</title>
+  <script>
+    (function () {
+      var dest = ${JSON.stringify(relTarget)} + (window.location.search || '') + (window.location.hash || '');
+      window.location.replace(dest);
+    })();
+  </script>
+</head>
+<body>
+  <main id="main">
+    <h1>Moved to Primary English Edition</h1>
+    <p>Redirecting to <a href="${escapeHtml(relTarget)}">${escapeHtml(enTitle)}</a>…</p>
+  </main>
+</body>
+</html>
+`;
+}
+
+function convertInlineHtmlToMd(fragment, basePageHref) {
+  return decodeHtml(
+    fragment
+      .replace(/<span\b[^>]*\bclass="sr-only"[^>]*>[\s\S]*?<\/span>/gi, '')
+      .replace(/<(?:span|b|i)\b[^>]*\baria-hidden="true"[^>]*>[\s\S]*?<\/(?:span|b|i)>/gi, '')
+      .replace(/<code\b[^>]*>([\s\S]*?)<\/code>/gi, (_, inner) => `\`${stripHtmlTags(inner)}\``)
+      .replace(/<(?:strong|b)\b[^>]*>([\s\S]*?)<\/(?:strong|b)>/gi, (_, inner) => `**${stripHtmlTags(inner)}**`)
+      .replace(/<a\b[^>]*\bhref="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi, (_, href, inner) => {
+        const label = stripHtmlTags(inner);
+        if (!label) return '';
+        let resolvedHref = decodeHtml(href);
+        if (site && (resolvedHref.startsWith('./') || resolvedHref.startsWith('../') || resolvedHref.startsWith('#'))) {
+          resolvedHref = new URL(resolvedHref, basePageHref).href;
+        }
+        return `[${label}](${resolvedHref})`;
+      })
+      .replace(/<br\s*\/?>/gi, ' ')
+      .replace(/<[^>]+>/g, ' '),
+  )
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function htmlMainToMarkdown({ docHtml, title, canonicalHref, lastmod }) {
+  const mainMatch = docHtml.match(/<main\b[^>]*>([\s\S]*?)<\/main>/i);
+  let body = mainMatch ? mainMatch[1] : docHtml;
+  const basePageHref = site ? canonicalHref : './';
+
+  // Strip purely visual/decorative blocks that add noise for coding agents
+  for (const attr of [
+    'class="hero-visual"',
+    'class="project-visual"',
+    'class="memory-visual"',
+    'class="document-visual"',
+    'class="agent-workflow-preview"',
+    'class="picker-grid"',
+  ]) {
+    let prev;
+    do {
+      prev = body;
+      body = removeElementByAttr(body, 'div', attr);
+    } while (body !== prev);
+  }
+  body = body.replace(/<svg\b[\s\S]*?<\/svg>/gi, '');
+
+  const codeBlocks = [];
+  body = body.replace(/<pre\b[^>]*>\s*<code\b[^>]*>([\s\S]*?)<\/code>\s*<\/pre>/gi, (_, rawCode) => {
+    const cleanCode = decodeHtml(rawCode.replace(/<[^>]+>/g, '')).trim();
+    const idx = codeBlocks.length;
+    codeBlocks.push(`\n\n\`\`\`bash\n${cleanCode}\n\`\`\`\n\n`);
+    return `\n\n__MD_CODE_BLOCK_${idx}__\n\n`;
+  });
+
+  // Convert HTML tables into GFM Markdown tables
+  body = body.replace(/<table\b[^>]*>([\s\S]*?)<\/table>/gi, (_, tableInner) => {
+    const captionMatch = tableInner.match(/<caption\b[^>]*>([\s\S]*?)<\/caption>/i);
+    const caption = captionMatch ? `**${convertInlineHtmlToMd(captionMatch[1], basePageHref)}**\n\n` : '';
+    const rows = [];
+    for (const [, trInner] of tableInner.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)) {
+      const cells = [...trInner.matchAll(/<(?:th|td)\b[^>]*>([\s\S]*?)<\/(?:th|td)>/gi)].map((m) =>
+        convertInlineHtmlToMd(m[1], basePageHref).replace(/\|/g, '\\|'),
+      );
+      if (cells.length > 0) rows.push(cells);
+    }
+    if (rows.length === 0) return '';
+    const colCount = Math.max(...rows.map((r) => r.length));
+    const padRow = (r) => {
+      const copy = [...r];
+      while (copy.length < colCount) copy.push('');
+      return `| ${copy.join(' | ')} |`;
+    };
+    const headerLine = padRow(rows[0]);
+    const dividerLine = `| ${Array(colCount).fill('---').join(' | ')} |`;
+    const dataLines = rows.slice(1).map(padRow);
+    return `\n\n${caption}${[headerLine, dividerLine, ...dataLines].join('\n')}\n\n`;
+  });
+
+  // Convert <details><summary>Q</summary>A</details>
+  body = body.replace(/<details\b[^>]*>\s*<summary\b[^>]*>([\s\S]*?)<\/summary>([\s\S]*?)<\/details>/gi, (_, sumHtml, restHtml) => {
+    const heading = convertInlineHtmlToMd(sumHtml, basePageHref);
+    return `\n\n### ${heading}\n\n${restHtml}\n\n`;
+  });
+
+  // Convert headings, list items, and paragraphs
+  body = body
+    .replace(/<h1\b[^>]*>([\s\S]*?)<\/h1>/gi, (_, h) => `\n\n# ${convertInlineHtmlToMd(h, basePageHref)}\n\n`)
+    .replace(/<h2\b[^>]*>([\s\S]*?)<\/h2>/gi, (_, h) => `\n\n## ${convertInlineHtmlToMd(h, basePageHref)}\n\n`)
+    .replace(/<h3\b[^>]*>([\s\S]*?)<\/h3>/gi, (_, h) => `\n\n### ${convertInlineHtmlToMd(h, basePageHref)}\n\n`)
+    .replace(/<h4\b[^>]*>([\s\S]*?)<\/h4>/gi, (_, h) => `\n\n#### ${convertInlineHtmlToMd(h, basePageHref)}\n\n`)
+    .replace(/<li\b[^>]*>([\s\S]*?)<\/li>/gi, (_, li) => `\n- ${convertInlineHtmlToMd(li, basePageHref)}`)
+    .replace(/<p\b[^>]*>([\s\S]*?)<\/p>/gi, (_, p) => `\n\n${convertInlineHtmlToMd(p, basePageHref)}\n\n`)
+    .replace(/<\/(?:section|article|div|header|footer|aside|ul|ol)>/gi, '\n\n')
+    .replace(/<(?:section|article|div|header|footer|aside|ul|ol)\b[^>]*>/gi, '\n');
+
+  // Strip remaining inline HTML tags while preserving line breaks
+  body = decodeHtml(
+    body
+      .replace(/<span\b[^>]*\bclass="sr-only"[^>]*>[\s\S]*?<\/span>/gi, '')
+      .replace(/<(?:span|b|i)\b[^>]*\baria-hidden="true"[^>]*>[\s\S]*?<\/(?:span|b|i)>/gi, '')
+      .replace(/<\/strong>(?=[A-Za-z0-9`\u4e00-\u9fff])/gi, '</strong> — ')
+      .replace(/<code\b[^>]*>([\s\S]*?)<\/code>/gi, (_, inner) => `\`${stripHtmlTags(inner)}\``)
+      .replace(/<(?:strong|b)\b[^>]*>([\s\S]*?)<\/(?:strong|b)>/gi, (_, inner) => `**${stripHtmlTags(inner)}**`)
+      .replace(/<a\b[^>]*\bhref="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi, (_, href, inner) => {
+        const label = stripHtmlTags(inner);
+        if (!label) return '';
+        let resolvedHref = decodeHtml(href);
+        if (site && (resolvedHref.startsWith('./') || resolvedHref.startsWith('../') || resolvedHref.startsWith('#'))) {
+          resolvedHref = new URL(resolvedHref, basePageHref).href;
+        }
+        return `[${label}](${resolvedHref})`;
+      })
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<[^>]+>/g, ' '),
+  );
+
+  body = body
+    .split('\n')
+    .map((line) => line.replace(/[ \t]+/g, ' ').trim())
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+
+  codeBlocks.forEach((snippet, idx) => {
+    body = body.replace(`__MD_CODE_BLOCK_${idx}__`, snippet.trim());
+  });
+  body = body.replace(/\n{3,}/g, '\n\n').trim();
+
+  const pricingRef = site ? new URL('pricing.md', site).href : './pricing.md';
+  const llmsFullRef = site ? new URL('llms-full.txt', site).href : './llms-full.txt';
+  return `> **Machine-Readable Markdown Mirror** · Canonical HTML: ${canonicalHref}
+> **Product**: ${brand.name} (${brand.chineseName} · \`qingsongcui/ContextCore\`) · **Version**: \`v${RELEASE_VERSION}\` · **Updated**: \`${lastmod}\`
+> **Pricing & License**: **$0 (100% Free & Open Source under the MIT License, no signup)** · [Pricing & Limits](${pricingRef}) · [Extended Spec](${llmsFullRef})
+
+${body}
+`;
+}
+
 // 1. Prepare clean dist/ and copy static assets + bundled CSS + transformed i18n.js
 await rm(out, { recursive: true, force: true });
+await mkdir(path.join(out, 'zh'), { recursive: true });
 await mkdir(path.join(out, 'en'), { recursive: true });
 
 const cssSource = path.join(root, 'assets', 'css');
@@ -626,23 +797,40 @@ const compareLastmod = gitLastmod(['compare.html', 'brand.config.mjs', 'scripts/
 const hostsLastmod = gitLastmod(['hosts.html', 'brand.config.mjs', 'scripts/build.mjs']);
 const relayLastmod = gitLastmod(['relay-workflow.html', 'brand.config.mjs', 'scripts/build.mjs']);
 
-const zhHomeHref = site ? site.href : './';
-const enHomeHref = site ? new URL('en/', site).href : './en/';
-const zhGuideHref = site ? new URL('guide.html', site).href : './guide.html';
-const enGuideHref = site ? new URL('en/guide.html', site).href : './en/guide.html';
-const zhCompareHref = site ? new URL('compare.html', site).href : './compare.html';
-const enCompareHref = site ? new URL('en/compare.html', site).href : './en/compare.html';
-const zhHostsHref = site ? new URL('hosts.html', site).href : './hosts.html';
-const enHostsHref = site ? new URL('en/hosts.html', site).href : './en/hosts.html';
-const zhRelayHref = site ? new URL('relay-workflow.html', site).href : './relay-workflow.html';
-const enRelayHref = site ? new URL('en/relay-workflow.html', site).href : './en/relay-workflow.html';
+const enHomeHref = site ? site.href : './';
+const zhHomeHref = site ? new URL('zh/', site).href : './zh/';
+const enGuideHref = site ? new URL('guide.html', site).href : './guide.html';
+const zhGuideHref = site ? new URL('zh/guide.html', site).href : './zh/guide.html';
+const enCompareHref = site ? new URL('compare.html', site).href : './compare.html';
+const zhCompareHref = site ? new URL('zh/compare.html', site).href : './zh/compare.html';
+const enHostsHref = site ? new URL('hosts.html', site).href : './hosts.html';
+const zhHostsHref = site ? new URL('zh/hosts.html', site).href : './zh/hosts.html';
+const enRelayHref = site ? new URL('relay-workflow.html', site).href : './relay-workflow.html';
+const zhRelayHref = site ? new URL('zh/relay-workflow.html', site).href : './zh/relay-workflow.html';
+const homeMdHref = site ? new URL('index.md', site).href : './index.md';
+const guideMdHref = site ? new URL('guide.md', site).href : './guide.md';
+const compareMdHref = site ? new URL('compare.md', site).href : './compare.md';
+const hostsMdHref = site ? new URL('hosts.md', site).href : './hosts.md';
+const relayMdHref = site ? new URL('relay-workflow.md', site).href : './relay-workflow.md';
+const pricingMdUrl = site ? new URL('pricing.md', site).href : './pricing.md';
 
-// 2. Build Chinese Homepage (dist/index.html) and Static English Homepage (dist/en/index.html)
+// 2. Build Primary Static English Homepage (dist/index.html), Simplified Chinese Homepage (dist/zh/index.html), and Legacy Redirect (dist/en/index.html)
 const baseIndexHtml = applyBrandTokens(await readFile(path.join(root, 'index.html'), 'utf8'));
 const baseSchema = JSON.parse(baseIndexHtml.match(/<script type="application\/ld\+json">(.*?)<\/script>/s)[1]);
 const zhSiteDesc = baseSchema['@graph'][0].description;
 const zhAppDesc = baseSchema['@graph'][1].description;
 const zhFaqBlock = baseIndexHtml.match(/<div class="faq-list" data-i18n-html="faq">([\s\S]*?)<\/div>\s*<\/section>/)[1];
+
+let zhHtml = baseIndexHtml
+  .replace('<html lang="zh-CN">', '<html lang="zh-CN" data-static-locale="zh">')
+  .replaceAll('href="./favicon.ico"', 'href="../favicon.ico"')
+  .replaceAll('href="./assets/', 'href="../assets/')
+  .replaceAll('src="./assets/', 'src="../assets/')
+  .replaceAll('href="./pricing.md"', 'href="../pricing.md"')
+  .replace(
+    /<div class="language-switch"[^>]*>[\s\S]*?<\/div>/,
+    '<div class="language-switch" role="group" aria-label="语言"><a href="../" data-lang="en" lang="en">EN</a><a href="./" data-lang="zh" aria-current="page" lang="zh-CN">中</a></div>',
+  );
 
 const zhSchema = buildHomepageSchema({
   lang: 'zh',
@@ -653,7 +841,7 @@ const zhSchema = buildHomepageSchema({
   lastmod: homeLastmod,
 });
 
-let zhHtml = baseIndexHtml.replace(
+zhHtml = zhHtml.replace(
   /<script type="application\/ld\+json">.*?<\/script>/s,
   `<script type="application/ld+json">${escapeJson(zhSchema)}</script>`,
 );
@@ -666,11 +854,12 @@ zhHtml = zhHtml.replace(
     canonicalHref: zhHomeHref,
     zhHref: zhHomeHref,
     enHref: enHomeHref,
+    mdHref: homeMdHref,
     altOgLocale: 'en_US',
     imageAlt: `${brand.name} · ${brand.chineseName} — ${brand.tagline}`,
   }),
 );
-await writeFile(path.join(out, 'index.html'), zhHtml);
+await writeFile(path.join(out, 'zh', 'index.html'), zhHtml);
 
 let enHtml = baseIndexHtml.replace('<html lang="zh-CN">', '<html lang="en" data-static-locale="en">');
 enHtml = replaceI18nHtmlBlocks(enHtml, htmlEn);
@@ -685,12 +874,9 @@ enHtml = enHtml
   .replace(/(<meta property="og:description" content=")[^"]*(")/, `$1${escapeHtml(metaEn.ogDescription)}$2`)
   .replace(/(<meta name="twitter:title" content=")[^"]*(")/, `$1${escapeHtml(metaEn.ogTitle)}$2`)
   .replace(/(<meta name="twitter:description" content=")[^"]*(")/, `$1${escapeHtml(metaEn.twitterDescription)}$2`)
-  .replaceAll('href="./favicon.ico"', 'href="../favicon.ico"')
-  .replaceAll('href="./assets/', 'href="../assets/')
-  .replaceAll('src="./assets/', 'src="../assets/')
   .replace(
     /<div class="language-switch"[^>]*>[\s\S]*?<\/div>/,
-    '<div class="language-switch" role="group" aria-label="Language"><a href="../" data-lang="zh" lang="zh-CN">中</a><a href="./" data-lang="en" aria-current="page" lang="en">EN</a></div>',
+    '<div class="language-switch" role="group" aria-label="Language"><a href="./" data-lang="en" aria-current="page" lang="en">EN</a><a href="./zh/" data-lang="zh" lang="zh-CN">中</a></div>',
   );
 
 const enSchema = buildHomepageSchema({
@@ -714,19 +900,39 @@ enHtml = enHtml.replace(
     canonicalHref: enHomeHref,
     zhHref: zhHomeHref,
     enHref: enHomeHref,
+    mdHref: homeMdHref,
     altOgLocale: 'zh_CN',
     imageAlt: metaEn.ogTitle,
   }),
 );
-await writeFile(path.join(out, 'en', 'index.html'), enHtml);
+await writeFile(path.join(out, 'index.html'), enHtml);
+await writeFile(
+  path.join(out, 'index.md'),
+  htmlMainToMarkdown({
+    docHtml: enHtml,
+    title: metaEn.title,
+    canonicalHref: enHomeHref,
+    lastmod: homeLastmod,
+  }),
+);
+await writeFile(
+  path.join(out, 'en', 'index.html'),
+  renderLegacyEnRedirect({
+    enTitle: metaEn.title,
+    targetCanonical: enHomeHref,
+    relTarget: '../',
+  }),
+);
 
 async function buildBilingualDocPagePair({
   fileName,
+  mdFileName,
   zhTitle,
   enTitle,
   enDesc,
   zhHref,
   enHref,
+  mdHref,
   lastmod,
   buildSchema,
   proficiencyLevel = 'Beginner',
@@ -734,10 +940,16 @@ async function buildBilingualDocPagePair({
   const baseDocHtml = applyBrandTokens(await readFile(path.join(root, fileName), 'utf8'));
   const zhDesc = decodeHtml(baseDocHtml.match(/<meta name="description" content="([^"]+)">/)[1]);
 
-  let zhDoc = removeElementByAttr(baseDocHtml, 'div', 'data-guide-section="en"').replace(
-    /\s*<hr class="lang-divider">\s*/g,
-    '\n',
-  );
+  let zhDoc = removeElementByAttr(baseDocHtml, 'div', 'data-guide-section="en"')
+    .replace(/\s*<hr class="lang-divider">\s*/g, '\n')
+    .replaceAll('href="./favicon.ico"', 'href="../favicon.ico"')
+    .replaceAll('href="./assets/', 'href="../assets/')
+    .replaceAll('src="./assets/', 'src="../assets/')
+    .replaceAll('href="./pricing.md"', 'href="../pricing.md"')
+    .replace(
+      /<div class="language-switch"[^>]*>[\s\S]*?<\/div>/,
+      `<div class="language-switch" role="group" aria-label="语言" data-aria-zh="语言" data-aria-en="Language"><a href="../${fileName}" data-lang="en" lang="en">EN</a><a href="./${fileName}" data-lang="zh" aria-current="page" lang="zh-CN">中</a></div>`,
+    );
   const zhSchema = buildSchema({
     lang: 'zh',
     pageUrl: zhHref,
@@ -758,12 +970,13 @@ async function buildBilingualDocPagePair({
         canonicalHref: zhHref,
         zhHref,
         enHref,
+        mdHref,
         altOgLocale: 'en_US',
         imageAlt: zhTitle,
       }),
     )
     .replace('</head>', `  <script type="application/ld+json">${escapeJson(zhSchema)}</script>\n</head>`);
-  await writeFile(path.join(out, fileName), zhDoc);
+  await writeFile(path.join(out, 'zh', fileName), zhDoc);
 
   let enDoc = removeElementByAttr(baseDocHtml, 'div', 'data-guide-section="zh"')
     .replace(/\s*<hr class="lang-divider">\s*/g, '\n')
@@ -790,12 +1003,9 @@ async function buildBilingualDocPagePair({
     .replace(/(<meta property="og:description" content=")[^"]*(")/, `$1${escapeHtml(enDesc)}$2`)
     .replace(/(<meta name="twitter:title" content=")[^"]*(")/, `$1${escapeHtml(enTitle)}$2`)
     .replace(/(<meta name="twitter:description" content=")[^"]*(")/, `$1${escapeHtml(enDesc)}$2`)
-    .replaceAll('href="./favicon.ico"', 'href="../favicon.ico"')
-    .replaceAll('href="./assets/', 'href="../assets/')
-    .replaceAll('src="./assets/', 'src="../assets/')
     .replace(
       /<div class="language-switch"[^>]*>[\s\S]*?<\/div>/,
-      `<div class="language-switch" role="group" aria-label="Language" data-aria-zh="语言" data-aria-en="Language"><a href="../${fileName}" data-lang="zh" lang="zh-CN">中</a><a href="./${fileName}" data-lang="en" aria-current="page" lang="en">EN</a></div>`,
+      `<div class="language-switch" role="group" aria-label="Language" data-aria-zh="语言" data-aria-en="Language"><a href="./${fileName}" data-lang="en" aria-current="page" lang="en">EN</a><a href="./zh/${fileName}" data-lang="zh" lang="zh-CN">中</a></div>`,
     );
 
   const enSchema = buildSchema({
@@ -818,54 +1028,80 @@ async function buildBilingualDocPagePair({
         canonicalHref: enHref,
         zhHref,
         enHref,
+        mdHref,
         altOgLocale: 'zh_CN',
         imageAlt: enTitle,
       }),
     )
     .replace('</head>', `  <script type="application/ld+json">${escapeJson(enSchema)}</script>\n</head>`);
-  await writeFile(path.join(out, 'en', fileName), enDoc);
+  await writeFile(path.join(out, fileName), enDoc);
+  await writeFile(
+    path.join(out, mdFileName),
+    htmlMainToMarkdown({
+      docHtml: enDoc,
+      title: enTitle,
+      canonicalHref: enHref,
+      lastmod,
+    }),
+  );
+  await writeFile(
+    path.join(out, 'en', fileName),
+    renderLegacyEnRedirect({
+      enTitle,
+      targetCanonical: enHref,
+      relTarget: `../${fileName}`,
+    }),
+  );
 }
 
 // 3. Build Bilingual Documentation Pages (guide, compare, hosts, relay-workflow)
 const docPages = [
   {
     fileName: 'guide.html',
+    mdFileName: 'guide.md',
     zhTitle: `${brand.name} · ${brand.chineseName} — 本地运行与使用指南`,
     enTitle: `${brand.name} — Local Setup & Workflow Guide`,
     enDesc: `${brand.name} macOS Apple Silicon local guide ($0 MIT): Homebrew Cask install, xattr first launch, /contextcore relay, shared memory, and MCP sync.`,
     zhHref: zhGuideHref,
     enHref: enGuideHref,
+    mdHref: guideMdHref,
     lastmod: guideLastmod,
     buildSchema: buildGuideSchema,
   },
   {
     fileName: 'compare.html',
+    mdFileName: 'compare.md',
     zhTitle: `${brand.name} · ${brand.chineseName} — 2026 多 Agent 上下文接力与 MCP 方案对比`,
     enTitle: `${brand.name} — 5 Ways to Share AI Agent Context (2026)`,
     enDesc: `Compare 5 ways to share context, memory, and sync MCP across Claude Code, Cursor & Codex: AGENTS.md, Mem0, ${brand.name} ($0 MIT), Dotfiles, and routers.`,
     zhHref: zhCompareHref,
     enHref: enCompareHref,
+    mdHref: compareMdHref,
     lastmod: compareLastmod,
     buildSchema: buildCompareSchema,
   },
   {
     fileName: 'hosts.html',
+    mdFileName: 'hosts.md',
     zhTitle: `${brand.name} · ${brand.chineseName} — 15 宿主 MCP 与 Skills 配置路径指南`,
     enTitle: `${brand.name} — MCP & Skills Config Paths Across 15 Agents`,
     enDesc: `Verified MCP, Skills, and rule config paths across 15 AI coding agents (JSON, TOML, JSON5, YAML) with rollback snapshots and strict 6+9 boundaries.`,
     zhHref: zhHostsHref,
     enHref: enHostsHref,
+    mdHref: hostsMdHref,
     lastmod: hostsLastmod,
     buildSchema: buildGuideSchema,
     proficiencyLevel: 'Intermediate',
   },
   {
     fileName: 'relay-workflow.html',
+    mdFileName: 'relay-workflow.md',
     zhTitle: `${brand.name} · ${brand.chineseName} — 跨 Agent 对话接力与伴生记忆实战`,
     enTitle: `${brand.name} — Cross-Agent Relay Workflow: Claude to Codex`,
     enDesc: `Step-by-step guide to continuing Claude Code tasks in Codex or Cursor with ${brand.name}: short briefs, paged /contextcore relay, and working memory.`,
     zhHref: zhRelayHref,
     enHref: enRelayHref,
+    mdHref: relayMdHref,
     lastmod: relayLastmod,
     buildSchema: buildGuideSchema,
     proficiencyLevel: 'Intermediate',
@@ -888,6 +1124,8 @@ const aiCrawlerAgents = [
   'Googlebot',
   'Bingbot',
   'Applebot',
+  'Bravebot',
+  'DuckAssistBot',
   'OAI-SearchBot',
   'ChatGPT-User',
   'Claude-SearchBot',
@@ -895,6 +1133,7 @@ const aiCrawlerAgents = [
   'PerplexityBot',
   'Google-Extended',
   'Applebot-Extended',
+  'Meta-ExternalAgent',
   'GPTBot',
   'ClaudeBot',
   'Bytespider',
@@ -909,16 +1148,16 @@ await writeFile(path.join(out, 'robots.txt'), robotsTxt);
 
 if (site) {
   const sitemapEntries = [
-    { loc: zhHomeHref, lastmod: homeLastmod, zh: zhHomeHref, en: enHomeHref },
     { loc: enHomeHref, lastmod: homeLastmod, zh: zhHomeHref, en: enHomeHref },
-    { loc: zhHostsHref, lastmod: hostsLastmod, zh: zhHostsHref, en: enHostsHref },
+    { loc: zhHomeHref, lastmod: homeLastmod, zh: zhHomeHref, en: enHomeHref },
     { loc: enHostsHref, lastmod: hostsLastmod, zh: zhHostsHref, en: enHostsHref },
-    { loc: zhRelayHref, lastmod: relayLastmod, zh: zhRelayHref, en: enRelayHref },
+    { loc: zhHostsHref, lastmod: hostsLastmod, zh: zhHostsHref, en: enHostsHref },
     { loc: enRelayHref, lastmod: relayLastmod, zh: zhRelayHref, en: enRelayHref },
-    { loc: zhGuideHref, lastmod: guideLastmod, zh: zhGuideHref, en: enGuideHref },
+    { loc: zhRelayHref, lastmod: relayLastmod, zh: zhRelayHref, en: enRelayHref },
     { loc: enGuideHref, lastmod: guideLastmod, zh: zhGuideHref, en: enGuideHref },
-    { loc: zhCompareHref, lastmod: compareLastmod, zh: zhCompareHref, en: enCompareHref },
+    { loc: zhGuideHref, lastmod: guideLastmod, zh: zhGuideHref, en: enGuideHref },
     { loc: enCompareHref, lastmod: compareLastmod, zh: zhCompareHref, en: enCompareHref },
+    { loc: zhCompareHref, lastmod: compareLastmod, zh: zhCompareHref, en: enCompareHref },
   ];
   const sitemapXml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">\n${sitemapEntries
     .map(
@@ -942,19 +1181,56 @@ if (site) {
   }
 }
 
-// 6. Build GEO-ready llms.txt & llms-full.txt
+// 6. Build Agent-Ready pricing.md, llms.txt & llms-full.txt
 const llmsFullUrl = site ? new URL('llms-full.txt', site).href : './llms-full.txt';
-const homeZhRef = site ? zhHomeHref : './index.html';
-const homeEnRef = site ? enHomeHref : './en/index.html';
-const guideZhRef = site ? zhGuideHref : './guide.html';
-const guideEnRef = site ? enGuideHref : './en/guide.html';
-const compareZhRef = site ? zhCompareHref : './compare.html';
-const compareEnRef = site ? enCompareHref : './en/compare.html';
-const hostsZhRef = site ? zhHostsHref : './hosts.html';
-const hostsEnRef = site ? enHostsHref : './en/hosts.html';
-const relayZhRef = site ? zhRelayHref : './relay-workflow.html';
-const relayEnRef = site ? enRelayHref : './en/relay-workflow.html';
+const homeEnRef = site ? enHomeHref : './index.html';
+const homeZhRef = site ? zhHomeHref : './zh/index.html';
+const guideEnRef = site ? enGuideHref : './guide.html';
+const guideZhRef = site ? zhGuideHref : './zh/guide.html';
+const compareEnRef = site ? enCompareHref : './compare.html';
+const compareZhRef = site ? zhCompareHref : './zh/compare.html';
+const hostsEnRef = site ? enHostsHref : './hosts.html';
+const hostsZhRef = site ? zhHostsHref : './zh/hosts.html';
+const relayEnRef = site ? enRelayHref : './relay-workflow.html';
+const relayZhRef = site ? zhRelayHref : './zh/relay-workflow.html';
 const releaseTagHref = `${brand.github}/releases/tag/v${RELEASE_VERSION}`;
+
+const pricingMdContent = `# ${brand.name} (${brand.chineseName} · ContextCore) — Pricing, License & System Requirements
+
+> **Price**: **$0 / month ($0 forever)** · **License**: [MIT License](${brand.github}/blob/main/LICENSE) · **Account Signup**: None required · **Telemetry / Cloud Upload**: Zero (100% local loopback \`127.0.0.1:8420\`)
+
+## Summary Table (Verified 2026-11-15 · Updated ${homeLastmod})
+
+| Dimension | Official Specification | Notes |
+|---|---|---|
+| **Price** | **$0** (100% Free & Open Source) | No free-trial expiration, no paid Pro/Enterprise tiers, no cloud paywall. |
+| **Open-Source License** | **MIT License** | Source repository: [${brand.github}](${brand.github}). |
+| **Account & Telemetry** | **No account · Zero telemetry** | Runs strictly on \`http://127.0.0.1:8420\` (dev \`18420\`); never uploads transcripts or code. |
+| **Model API Costs** | **BYOK (Bring Your Own Key)** | You configure your own provider API keys in your AI coding clients; keys stay isolated in macOS Keychain. |
+| **Supported OS & CPU** | **macOS 14.0+ · Apple Silicon (\`arm64\`)** | Sonoma or later on M-series Macs only. Not supported on Windows, Linux, or Intel (\`x86_64\`) Macs. |
+| **Current Release** | **\`v${RELEASE_VERSION}\`** (Public Beta) | Install via \`brew install --cask qingsongcui/tap/senrelay\` or [\`Senrelay-macOS.zip\`](${releaseTagHref}). |
+| **First-Launch Gatekeeper Note** | \`xattr -cr /Applications/Senrelay.app\` | Public Beta bundles are ad-hoc signed prior to Apple Developer ID notarization. |
+| **Package Disambiguation** | **Never run \`pip install contextcore\`** | Public PyPI \`contextcore\` and \`context-core.dev\` are unrelated third-party projects. Host MCP server key is \`contextcore\` at \`http://127.0.0.1:8420/mcp/\` (never \`senrelay-mcp\`). |
+
+## Included Capabilities at $0 (MIT)
+
+- **6 Core Context Hosts (\`Claude Code\`, \`Codex\`, \`Cursor\`, \`Antigravity\`, \`OMP\`, \`OpenCode\`)**:
+  - Native local session discovery with worktree and UUID disambiguation.
+  - \`/contextcore\` short-brief candidate selection and sequential \`read_conversation_messages\` full-transcript in-context compaction (\`must_not_execute=true\` read-only stand-by on number-only selection).
+  - Dual-tier working memory (\`working_tasks\` + 6 categories of version-governed source-linked memories), \`AGENTS.md\` preview, and document imports (\`MD\`, \`TXT\`, \`JSON\`, \`PDF\`, \`DOCX\`, \`DOC\`).
+  - Provider presets, latency checks, Keychain secret isolation, and multi-host MCP / Skills / prompt sync with automatic rollback snapshots and external-edit Diff guards.
+- **9 Extended Configuration Hosts (\`Claude Desktop\`, \`Gemini CLI\`, \`Grok Build\`, \`Kimi Code\`, \`MiniMax Code\`, \`Pi\`, \`Hermes\`, \`OpenClaw\`, \`agy\`)**:
+  - Previewed configuration writes, format conversion (\`JSON\`, \`JSON5\`, \`TOML\`, \`YAML\`), and rollback snapshots only (no session capture or \`/contextcore\` conversation relay).
+
+## When NOT to Use ${brand.name}
+
+1. **Windows, Linux, or Intel (\`x86_64\`) macOS environments**: Start with Git-tracked \`CLAUDE.md\` + \`AGENTS.md\` ($0) instead.
+2. **Multi-device cloud memory sync or hosted team SaaS**: Pair \`AGENTS.md\` with a cloud/self-hosted Memory MCP server (e.g., Mem0 / OpenMemory).
+3. **Single-IDE workflows where you never switch agent harnesses**: Use a single IDE with an LLM router.
+
+See the full [5-Way Comparison & Stack Picker](${compareEnRef}) and [15-Host Config Reference](${hostsEnRef}).
+`;
+await writeFile(path.join(out, 'pricing.md'), pricingMdContent);
 
 const llmsContent = `# ${brand.name} · ${brand.chineseName} (ContextCore)
 
@@ -984,15 +1260,16 @@ ${brand.name} (${brand.chineseName}) runs natively on macOS 14.0+ (Sonoma or lat
 
 ## Resources
 
-- [English Homepage](${homeEnRef}): Static English product overview, host capability matrix, and FAQ.
-- [Chinese Homepage (中文首页)](${homeZhRef}): Primary Simplified Chinese product overview and interactive walkthrough.
-- [English Host Config Reference (15 AI Agents)](${hostsEnRef}): Verified MCP, Skills, and instruction paths across 6 core and 9 extended agents (JSON, TOML, JSON5, YAML) plus safety boundaries.
+- [English Homepage](${homeEnRef}) ([Markdown Mirror](${homeMdHref})): Primary static English product overview, host capability matrix, and FAQ.
+- [Pricing, License & System Requirements (Markdown)](${pricingMdUrl}): Machine-readable $0 MIT pricing, BYOK policy, Apple Silicon requirements, and scope limits.
+- [English Host Config Reference (15 AI Agents)](${hostsEnRef}) ([Markdown Mirror](${hostsMdHref})): Verified MCP, Skills, and instruction paths across 6 core and 9 extended agents (JSON, TOML, JSON5, YAML) plus safety boundaries.
+- [English Cross-Agent Relay Workflow](${relayEnRef}) ([Markdown Mirror](${relayMdHref})): Step-by-step workflow to continue Claude Code sessions in Codex or Cursor with short briefs, paged reading, and stand-by safeguards.
+- [English Setup & Workflow Guide](${guideEnRef}) ([Markdown Mirror](${guideMdHref})): Homebrew Cask install, first launch (\`xattr -cr\`), source build, and daily workflows.
+- [English 5-Way Comparison & Stack Picker](${compareEnRef}) ([Markdown Mirror](${compareMdHref})): Objective comparison of \`CLAUDE.md\`/\`AGENTS.md\`, Cloud Memory MCP, ${brand.name}, Dotfiles scripts, and single-IDE routers (with interactive picker & real downsides).
+- [Chinese Homepage (中文首页)](${homeZhRef}): 简体中文产品概览、能力矩阵与常见问题。
 - [Chinese Host Config Reference (15 宿主配置路径指南)](${hostsZhRef}): 6 类核心接力宿主与 9 类扩展宿主的 MCP/Skills/规则文件路径与写前保护边界。
-- [English Cross-Agent Relay Workflow](${relayEnRef}): Step-by-step workflow to continue Claude Code sessions in Codex or Cursor with short briefs, paged reading, and stand-by safeguards.
 - [Chinese Cross-Agent Relay Workflow (跨 Agent 接力流程)](${relayZhRef}): Claude Code 切 Codex/Cursor 的六步接力协议、短简介选号与双层记忆协同。
-- [English Setup & Workflow Guide](${guideEnRef}): Homebrew Cask install, first launch (\`xattr -cr\`), source build, and daily workflows.
 - [Chinese Setup & Workflow Guide (中文运行指南)](${guideZhRef}): 本地安装、首次启动、源码运行与三大工作流指南。
-- [English 5-Way Comparison & Stack Picker](${compareEnRef}): Objective comparison of \`CLAUDE.md\`/\`AGENTS.md\`, Cloud Memory MCP, ${brand.name}, Dotfiles scripts, and single-IDE routers (with interactive picker & real downsides).
 - [Chinese 5-Way Comparison & Stack Picker (5 种方案客观对比)](${compareZhRef}): 跨 AI 编程助手共享上下文、记忆与同步 MCP 的 5 种方案深度横评与按环境交互选型。
 - [Extended LLM Reference](${llmsFullUrl}): Complete full-transcript relay & compaction specification, 6+9 host support matrix, CLI commands, and bilingual FAQ.
 - [GitHub Repository](${brand.github}): Source code, architecture contracts, and automated verification gates.

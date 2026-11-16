@@ -10,13 +10,16 @@ const originalTitle = document.title;
 const metaOriginal = new WeakMap();
 const ldNode = document.querySelector('script[type="application/ld+json"]');
 const originalLd = ldNode ? ldNode.textContent : '';
-const isStaticEnPage = root.getAttribute('data-static-locale') === 'en';
+const staticLocale = root.getAttribute('data-static-locale');
+const isStaticEnPage = staticLocale === 'en';
+const isStaticZhPage = staticLocale === 'zh';
+const isStaticLocalePage = isStaticEnPage || isStaticZhPage;
 const docDefaultLang = isStaticEnPage || (root.getAttribute('lang') || '').toLowerCase().startsWith('en') ? 'en' : 'zh';
 
 function detectLanguage() {
   const override = new URLSearchParams(window.location.search).get('lang');
   if (override === 'zh' || override === 'en') return override;
-  if (isStaticEnPage) return 'en';
+  if (isStaticLocalePage) return staticLocale;
   try {
     const stored = window.localStorage.getItem(LANG_KEY);
     if (stored === 'zh' || stored === 'en') return stored;
@@ -128,11 +131,11 @@ function syncLanguageControls(lang) {
 
 let hasTranslated = false;
 function applyLanguage(lang) {
-  if (!isStaticEnPage && (hasTranslated || lang !== docDefaultLang)) {
+  if (!isStaticLocalePage && (hasTranslated || lang !== docDefaultLang)) {
     hasTranslated = true;
     applyText(lang);
     applyMeta(lang);
-  } else if (!isStaticEnPage) {
+  } else if (!isStaticLocalePage) {
     document.documentElement.lang = lang === 'en' ? 'en' : 'zh-CN';
   }
   syncLanguageControls(lang);
@@ -221,9 +224,9 @@ document.querySelectorAll('[data-lang]').forEach(control => {
   control.addEventListener('click', event => {
     const next = control.dataset.lang;
     if (next !== 'zh' && next !== 'en') return;
-    if (isStaticEnPage) {
+    if (isStaticLocalePage) {
       try { window.localStorage.setItem(LANG_KEY, next); } catch { /* Storage is optional. */ }
-      if (next === 'en') event?.preventDefault?.();
+      if (next === staticLocale) event?.preventDefault?.();
       return;
     }
     if (!event?.metaKey && !event?.ctrlKey && !event?.shiftKey && !event?.altKey) {
@@ -232,11 +235,11 @@ document.querySelectorAll('[data-lang]').forEach(control => {
     }
   });
 });
-if (isStaticEnPage && language === 'zh') {
-  const zhControl = document.querySelector('[data-lang="zh"]');
-  const targetHref = zhControl && zhControl.getAttribute('href');
+if (isStaticLocalePage && language !== staticLocale) {
+  const targetControl = document.querySelector(`[data-lang="${language}"]`);
+  const targetHref = targetControl && targetControl.getAttribute('href');
   if (targetHref && window.location && typeof window.location.replace === 'function') {
     window.location.replace(targetHref);
   }
 }
-applyLanguage(isStaticEnPage ? 'en' : language);
+applyLanguage(isStaticLocalePage ? staticLocale : language);

@@ -11,9 +11,11 @@ try {
   i18nModule = await import('../assets/i18n.js');
 }
 const { attrEn, htmlEn, metaEn, textEn } = i18nModule;
-const html = await readFile(path.join(root, 'dist/index.html'), 'utf8');
+const html = await readFile(path.join(root, 'dist/zh/index.html'), 'utf8');
+const enHtml = await readFile(path.join(root, 'dist/index.html'), 'utf8');
 const cjk = /[\u4e00-\u9fff]/;
 
+assert.match(enHtml, /<html lang="en" data-static-locale="en">/);
 assert.match(html, /class="language-switch"/, 'language switch exists');
 assert.match(html, /data-lang="zh"/);
 assert.match(html, /data-lang="en"/);

@@ -88,6 +88,7 @@ export const textEn = {
   '宿主路径': 'Host Paths',
   '接力流程': 'Relay Workflow',
   '运行指南': 'Setup Guide',
+  '免费开源 ($0)': 'Pricing ($0)',
   '（新窗口）': '(opens in a new window)',
   '工具可以切换。': 'Switch tools.',
   '你的思路，不必重来。': 'Keep your thinking.',

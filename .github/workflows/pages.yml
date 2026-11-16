@@ -52,14 +52,27 @@ jobs:
           test -f dist/CNAME
           test -f dist/favicon.ico
           test -f dist/404.html
+          test -f dist/index.html
           test -f dist/hosts.html
           test -f dist/relay-workflow.html
+          test -f dist/guide.html
           test -f dist/compare.html
+          test -f dist/zh/index.html
+          test -f dist/zh/hosts.html
+          test -f dist/zh/relay-workflow.html
+          test -f dist/zh/guide.html
+          test -f dist/zh/compare.html
           test -f dist/en/index.html
           test -f dist/en/hosts.html
           test -f dist/en/relay-workflow.html
           test -f dist/en/guide.html
           test -f dist/en/compare.html
+          test -f dist/pricing.md
+          test -f dist/index.md
+          test -f dist/hosts.md
+          test -f dist/relay-workflow.md
+          test -f dist/guide.md
+          test -f dist/compare.md
           test -f dist/sitemap.xml
           test -f dist/robots.txt
           test -f dist/llms.txt
@@ -94,15 +107,21 @@ jobs:
               keyLocation: ("https://senrelay.com/" + $key + ".txt"),
               urlList: [
                 "https://senrelay.com/",
-                "https://senrelay.com/en/",
+                "https://senrelay.com/zh/",
                 "https://senrelay.com/hosts.html",
-                "https://senrelay.com/en/hosts.html",
+                "https://senrelay.com/zh/hosts.html",
                 "https://senrelay.com/relay-workflow.html",
-                "https://senrelay.com/en/relay-workflow.html",
+                "https://senrelay.com/zh/relay-workflow.html",
                 "https://senrelay.com/guide.html",
-                "https://senrelay.com/en/guide.html",
+                "https://senrelay.com/zh/guide.html",
                 "https://senrelay.com/compare.html",
-                "https://senrelay.com/en/compare.html",
+                "https://senrelay.com/zh/compare.html",
+                "https://senrelay.com/pricing.md",
+                "https://senrelay.com/index.md",
+                "https://senrelay.com/hosts.md",
+                "https://senrelay.com/relay-workflow.md",
+                "https://senrelay.com/guide.md",
+                "https://senrelay.com/compare.md",
                 "https://senrelay.com/llms.txt",
                 "https://senrelay.com/llms-full.txt"
               ]

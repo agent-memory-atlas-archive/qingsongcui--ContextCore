@@ -167,4 +167,7 @@ test('URL language wins over storage; denied storage, open disclosures, and visi
   const staticEn = fixture({ search: '', stored: 'zh', htmlLang: 'en', staticLocale: 'en' });
   assert.equal(staticEn.en.getAttribute('aria-current'), 'page');
   assert.equal(staticEn.zh.getAttribute('aria-current'), null);
+  const staticZh = fixture({ search: '', stored: 'en', htmlLang: 'zh-CN', staticLocale: 'zh' });
+  assert.equal(staticZh.zh.getAttribute('aria-current'), 'page');
+  assert.equal(staticZh.en.getAttribute('aria-current'), null);
 });
