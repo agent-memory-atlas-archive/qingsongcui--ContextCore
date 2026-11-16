@@ -243,3 +243,11 @@ if (isStaticLocalePage && language !== staticLocale) {
   }
 }
 applyLanguage(isStaticLocalePage ? staticLocale : language);
+
+
+document.addEventListener('toggle', event => {
+  const disclosure = event.target;
+  if (disclosure.matches?.('.film-disclosure') && !disclosure.open) {
+    disclosure.querySelector('video')?.pause();
+  }
+}, true);

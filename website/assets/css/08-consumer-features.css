@@ -750,45 +750,41 @@ html[lang="en"] .section-label {
   }
 }
 
-/* 42s Keynote Launch Film Stage */
+/* Homepage film disclosure */
 .launch-film-section {
-  padding-top: 64px;
-  padding-bottom: 56px;
+  padding-block: 4px;
 }
-[data-i18n-html="launchFilm"] {
-  display: grid;
-  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
-  gap: 20px clamp(24px, 4vw, 64px);
+.film-disclosure summary {
+  display: flex;
   align-items: center;
-}
-.launch-film-section .section-label {
-  grid-column: 1 / -1;
-  margin-bottom: 0;
-}
-.launch-film-heading {
-  display: grid;
-  gap: 16px;
-}
-.launch-film-heading h2 {
-  font-size: clamp(28px, 3.6vw, 44px);
-  line-height: 1.16;
-  letter-spacing: -0.03em;
-  color: #eef3e8;
-  margin: 0;
-}
-.launch-film-lead {
-  margin: 0;
-  color: var(--muted);
+  gap: 10px;
+  width: fit-content;
+  min-height: 44px;
+  cursor: pointer;
   font-size: 15px;
-  line-height: 1.7;
+  font-weight: 600;
+}
+.film-disclosure summary::-webkit-details-marker {
+  display: none;
+}
+.film-disclosure summary::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border: solid currentColor;
+  border-width: 1.5px 1.5px 0 0;
+  transform: rotate(45deg);
+}
+.film-disclosure[open] summary::before {
+  transform: rotate(135deg);
+}
+.film-disclosure summary small {
+  color: var(--muted);
+  font-weight: 400;
 }
 .launch-film-frame {
-  margin: 0;
-  padding: 16px;
-  border-radius: 12px;
-  border: 1px solid #3c4833;
-  background: linear-gradient(180deg, #1b2118 0%, #141812 100%);
-  box-shadow: 0 24px 56px rgba(0, 0, 0, 0.42);
+  max-width: 480px;
+  margin: 4px 0 12px;
 }
 .launch-film-frame video {
   display: block;
@@ -815,13 +811,4 @@ html[lang="en"] .section-label {
   flex-wrap: wrap;
   align-items: center;
   gap: 16px;
-}
-@media (max-width: 860px) {
-  [data-i18n-html="launchFilm"] {
-    grid-template-columns: 1fr;
-    gap: 14px;
-  }
-  .launch-film-frame {
-    padding: 10px;
-  }
 }
