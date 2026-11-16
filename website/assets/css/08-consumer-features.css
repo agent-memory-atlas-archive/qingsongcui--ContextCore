@@ -755,12 +755,19 @@ html[lang="en"] .section-label {
   padding-top: 64px;
   padding-bottom: 56px;
 }
+[data-i18n-html="launchFilm"] {
+  display: grid;
+  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
+  gap: 20px clamp(24px, 4vw, 64px);
+  align-items: center;
+}
+.launch-film-section .section-label {
+  grid-column: 1 / -1;
+  margin-bottom: 0;
+}
 .launch-film-heading {
   display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
-  gap: 28px;
-  align-items: end;
-  margin-bottom: 28px;
+  gap: 16px;
 }
 .launch-film-heading h2 {
   font-size: clamp(28px, 3.6vw, 44px);
@@ -786,10 +793,11 @@ html[lang="en"] .section-label {
 .launch-film-frame video {
   display: block;
   width: 100%;
+  height: auto;
   aspect-ratio: 16 / 9;
   border-radius: 8px;
   background: #0a0c0a;
-  object-fit: cover;
+  object-fit: contain;
 }
 .launch-film-meta {
   display: flex;
@@ -809,7 +817,7 @@ html[lang="en"] .section-label {
   gap: 16px;
 }
 @media (max-width: 860px) {
-  .launch-film-heading {
+  [data-i18n-html="launchFilm"] {
     grid-template-columns: 1fr;
     gap: 14px;
   }
