@@ -721,7 +721,9 @@ export function AgentWorkspace({ host, allHosts = [], tab, revision, onChanged, 
       try {
         const state = await request(`/api/manage/hosts/${encodeURIComponent(selected.hostId)}/state`);
         if (state.host_id === selected.hostId) hostReadback = { state, resources: readbackResources(receipt, state, {}) };
-      } catch {}
+      } catch {
+        hostReadback = null;
+      }
       if (!isCurrent()) return;
       if (receipt.status === 'planned') {
         setSyncReview(current => (current ? { ...current, plan: receipt, result: null, hostReadback } : current));
