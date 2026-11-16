@@ -1,0 +1,31 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.qingsongcui/contextcore",
+  "title": "Senrelay (ContextCore)",
+  "description": "Local macOS multi-agent session relay (/contextcore), source-linked memory, and 15-host MCP sync.",
+  "websiteUrl": "https://senrelay.com/",
+  "repository": {
+    "url": "https://github.com/qingsongcui/ContextCore",
+    "source": "github"
+  },
+  "icons": [
+    {
+      "src": "https://senrelay.com/assets/icon-192.png",
+      "mimeType": "image/png",
+      "sizes": [
+        "192x192"
+      ]
+    }
+  ],
+  "version": "1.0.0-beta.2",
+  "packages": [
+    {
+      "registryType": "mcpb",
+      "identifier": "https://github.com/qingsongcui/ContextCore/releases/download/v1.0.0-beta.2/senrelay-contextcore-mcp.mcpb",
+      "fileSha256": "0656ca3354aa6131e585af497cb92056e594e58752a4af412aaa129066b072e9",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

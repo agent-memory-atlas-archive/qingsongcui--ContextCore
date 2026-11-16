@@ -1210,7 +1210,7 @@ const pricingMdContent = `# ${brand.name} (${brand.chineseName} · ContextCore) 
 | **Supported OS & CPU** | **macOS 14.0+ · Apple Silicon (\`arm64\`)** | Sonoma or later on M-series Macs only. Not supported on Windows, Linux, or Intel (\`x86_64\`) Macs. |
 | **Current Release** | **\`v${RELEASE_VERSION}\`** (Public Beta) | Install via \`brew install --cask qingsongcui/tap/senrelay\` or [\`Senrelay-macOS.zip\`](${releaseTagHref}). |
 | **First-Launch Gatekeeper Note** | \`xattr -cr /Applications/Senrelay.app\` | Public Beta bundles are ad-hoc signed prior to Apple Developer ID notarization. |
-| **Package Disambiguation** | **Never run \`pip install contextcore\`** | Public PyPI \`contextcore\` and \`context-core.dev\` are unrelated third-party projects. Host MCP server key is \`contextcore\` at \`http://127.0.0.1:8420/mcp/\` (never \`senrelay-mcp\`). |
+| **Package Disambiguation** | **Never run \`pip install contextcore\`** | Public PyPI \`contextcore\` and \`context-core.dev\` are unrelated third-party projects. Host MCP server key is \`contextcore\` at \`http://127.0.0.1:8420/mcp/\` (never \`senrelay-mcp\`). Official MCP Registry ID: \`io.github.qingsongcui/contextcore\`. |
 
 ## Included Capabilities at $0 (MIT)
 
@@ -1238,7 +1238,7 @@ const llmsContent = `# ${brand.name} · ${brand.chineseName} (ContextCore)
 
 ${brand.name} (${brand.chineseName}) runs natively on macOS 14.0+ (Sonoma or later, Apple Silicon \`arm64\`) as \`Senrelay.app\` or from source via Python 3.11+ and Node 22/24 LTS. Pricing: **$0 (free and open source under the MIT License)**.
 
-> **Package & MCP Disambiguation**: Install the macOS app via \`brew install --cask qingsongcui/tap/senrelay\` or GitHub Releases (\`Senrelay-macOS.zip\`). Do **NOT** run \`pip install contextcore\`—the PyPI package of that name is an unrelated third-party project. In AI host configurations, Senrelay registers under the MCP server key \`contextcore\` pointing to \`http://127.0.0.1:8420/mcp/\` alongside the companion \`/contextcore\` skill (never \`senrelay-mcp\`).
+> **Package & MCP Disambiguation**: Install the macOS app via \`brew install --cask qingsongcui/tap/senrelay\` or GitHub Releases (\`Senrelay-macOS.zip\`). Do **NOT** run \`pip install contextcore\`—the PyPI package of that name is an unrelated third-party project. In AI host configurations, Senrelay registers under the MCP server key \`contextcore\` pointing to \`http://127.0.0.1:8420/mcp/\` alongside the companion \`/contextcore\` skill (never \`senrelay-mcp\`). Official MCP Registry ID: \`io.github.qingsongcui/contextcore\`.
 
 ## Core Capabilities
 
