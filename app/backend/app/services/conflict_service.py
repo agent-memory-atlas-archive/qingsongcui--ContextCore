@@ -272,6 +272,57 @@ def resolve_conflict(
         return row_to_dict(conn.execute("SELECT * FROM conflicts WHERE id = ?", (conflict_id,)).fetchone())
 
 
+def _resolve_unique_quote_source_conversation(
+    conn,
+    *,
+    project_id: str | None,
+    prop_tags: list[str] | None,
+    prop_quote: str,
+):
+    tags_list = [t for t in (prop_tags or []) if isinstance(t, str)]
+    explicit_cid = next(
+        (
+            t.split(":", 1)[1].strip()
+            for t in tags_list
+            if t.startswith(("conversation_id:", "source_conversation:")) and t.split(":", 1)[1].strip()
+        ),
+        None,
+    )
+    if explicit_cid:
+        row = conn.execute(
+            "SELECT id, title, agent FROM conversations WHERE id = ? LIMIT 1",
+            (explicit_cid,),
+        ).fetchone()
+        if row is not None:
+            return row
+
+    src_ver = next(
+        (
+            t.split(":", 1)[1].strip()
+            for t in tags_list
+            if t.startswith("source_version:") and t.split(":", 1)[1].strip()
+        ),
+        None,
+    )
+    if src_ver:
+        rows = conn.execute(
+            "SELECT id, title, agent FROM conversations WHERE project_id IS ? AND content_hash = ? LIMIT 2",
+            (project_id, src_ver),
+        ).fetchall()
+        if len(rows) == 1:
+            return rows[0]
+
+    if project_id is not None:
+        rows = conn.execute(
+            "SELECT id, title, agent FROM conversations WHERE project_id = ? AND messages LIKE ? ESCAPE '\\' LIMIT 2",
+            (project_id, f"%{escape_like(prop_quote)}%"),
+        ).fetchall()
+        if len(rows) == 1:
+            return rows[0]
+
+    return None
+
+
 def _attach_conflict_quote_source(
     conn,
     *,
@@ -281,45 +332,83 @@ def _attach_conflict_quote_source(
     prop_quote: str,
     now: str,
 ) -> None:
-    updated = conn.execute(
-        "UPDATE content_sources SET quote = ? WHERE content_id = ?",
-        (prop_quote, content_id),
+    src_conv = _resolve_unique_quote_source_conversation(
+        conn,
+        project_id=project_id,
+        prop_tags=prop_tags,
+        prop_quote=prop_quote,
     )
-    if updated.rowcount > 0:
+    if src_conv is None:
+        placeholder = conn.execute(
+            """
+            SELECT id FROM content_sources
+            WHERE content_id = ? AND source_id IS NULL AND deleted = 0
+              AND (quote IS NULL OR trim(quote) = '')
+            ORDER BY rowid DESC LIMIT 1
+            """,
+            (content_id,),
+        ).fetchone()
+        if placeholder is not None:
+            conn.execute(
+                "UPDATE content_sources SET quote = ? WHERE id = ?",
+                (prop_quote, placeholder["id"]),
+            )
         return
-    src_ver = next(
-        (
-            t.split(":", 1)[1]
-            for t in (prop_tags or [])
-            if isinstance(t, str) and t.startswith("source_version:") and t.split(":", 1)[1]
-        ),
-        None,
-    )
-    src_conv = None
-    if src_ver:
-        src_conv = conn.execute(
-            "SELECT id, title, agent FROM conversations WHERE project_id IS ? AND content_hash = ? LIMIT 1",
-            (project_id, src_ver),
-        ).fetchone()
-    if src_conv is None and project_id is not None:
-        src_conv = conn.execute(
-            "SELECT id, title, agent FROM conversations WHERE project_id = ? AND messages LIKE ? ESCAPE '\\' ORDER BY updated_at DESC LIMIT 1",
-            (project_id, f"%{escape_like(prop_quote)}%"),
-        ).fetchone()
-    if src_conv is not None:
+
+    placeholder = conn.execute(
+        """
+        SELECT id FROM content_sources
+        WHERE content_id = ? AND source_id IS NULL AND deleted = 0
+          AND (quote = ? OR quote IS NULL OR trim(quote) = '')
+        ORDER BY rowid DESC LIMIT 1
+        """,
+        (content_id, prop_quote),
+    ).fetchone()
+    if placeholder is not None:
         conn.execute(
             """
-            INSERT INTO content_sources (
-                id, content_id, source_id, source_kind, source_title, source_agent, deleted, quote, created_at
-            ) VALUES (?, ?, ?, 'conversation', ?, ?, 0, ?, ?)
+            UPDATE content_sources
+            SET source_id = ?, source_title = ?, source_agent = ?, quote = ?
+            WHERE id = ?
             """,
-            (
-                new_id("src"),
-                content_id,
-                src_conv["id"],
-                src_conv["title"] or "",
-                src_conv["agent"],
-                prop_quote,
-                now,
-            ),
+            (src_conv["id"], src_conv["title"] or "", src_conv["agent"], prop_quote, placeholder["id"]),
         )
+        return
+
+    existing_same = conn.execute(
+        """
+        SELECT id, quote FROM content_sources
+        WHERE content_id = ? AND source_id = ? AND source_kind = 'conversation' AND deleted = 0
+        ORDER BY rowid DESC LIMIT 1
+        """,
+        (content_id, src_conv["id"]),
+    ).fetchone()
+    if existing_same is not None:
+        existing_quote = (existing_same["quote"] or "").strip()
+        if not existing_quote or existing_quote == prop_quote.strip():
+            conn.execute(
+                """
+                UPDATE content_sources
+                SET quote = ?, source_title = ?, source_agent = ?
+                WHERE id = ?
+                """,
+                (prop_quote, src_conv["title"] or "", src_conv["agent"], existing_same["id"]),
+            )
+            return
+
+    conn.execute(
+        """
+        INSERT INTO content_sources (
+            id, content_id, source_id, source_kind, source_title, source_agent, deleted, quote, created_at
+        ) VALUES (?, ?, ?, 'conversation', ?, ?, 0, ?, ?)
+        """,
+        (
+            new_id("src"),
+            content_id,
+            src_conv["id"],
+            src_conv["title"] or "",
+            src_conv["agent"],
+            prop_quote,
+            now,
+        ),
+    )

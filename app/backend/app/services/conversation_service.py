@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 import hashlib
 import json
+from pathlib import Path
 import sqlite3
 from typing import Any
 from fastapi import HTTPException
@@ -1109,3 +1110,398 @@ def delete_conversation(conversation_id: str, actor: str = "user") -> dict[str, 
         log_audit(actor=actor, action="conversation.delete", target=conversation_id, conn=conn)
 
     return {"ok": True}
+
+
+def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+        (table_name,),
+    ).fetchone()
+    return row is not None
+
+
+def _derive_reclassified_title(
+    target_host: str,
+    target_sid: str,
+    conv: dict[str, Any],
+    msgs: list[dict[str, Any]],
+) -> str:
+    raw_title = str(conv.get("title") or "").strip()
+    if raw_title and not raw_title.startswith("Claude Code"):
+        return raw_title
+
+    from app.services.handoff_service import _clean_line, _summarize_conversation_for_relay
+
+    summary = _summarize_conversation_for_relay(
+        {
+            "id": conv["id"],
+            "agent": target_host,
+            "title": "",
+            "cwd": conv.get("cwd") or "",
+            "messages": msgs,
+            "process_summary": conv.get("process_summary") or "",
+        },
+        "zh",
+        include_tools=False,
+    )
+    derived = _clean_line(summary.get("title") or "", 120)
+    if derived and derived not in {"未命名会话", "Untitled conversation"}:
+        return derived
+
+    for msg in msgs:
+        text = str(msg.get("content") or msg.get("text") or "").strip()
+        if text:
+            cleaned = _clean_line(text, 80)
+            if cleaned:
+                return cleaned
+
+    host_labels = {"grok-build": "Grok Build", "cursor": "Cursor"}
+    prefix = host_labels.get(target_host, target_host)
+    short_sid = target_sid[:12] if target_sid else conv["id"][:12]
+    return f"{prefix} {short_sid}"
+
+
+def _scan_foreign_session_dirs(home_dir: Path) -> tuple[dict[str, str], dict[str, str]]:
+    """Index local Grok Build and Cursor session artifacts by session UUID."""
+    from pathlib import Path as _Path
+
+    grok_map: dict[str, str] = {}
+    grok_sessions = _Path(home_dir) / ".grok" / "sessions"
+    if grok_sessions.is_dir():
+        try:
+            for proj_dir in grok_sessions.iterdir():
+                if not proj_dir.is_dir():
+                    continue
+                for sess_dir in proj_dir.iterdir():
+                    if not sess_dir.is_dir():
+                        continue
+                    updates_file = sess_dir / "updates.jsonl"
+                    grok_map[sess_dir.name] = str(updates_file if updates_file.is_file() else sess_dir)
+        except OSError:
+            pass
+
+    cursor_map: dict[str, str] = {}
+    cursor_projects = _Path(home_dir) / ".cursor" / "projects"
+    if cursor_projects.is_dir():
+        try:
+            for proj_dir in cursor_projects.iterdir():
+                transcripts_dir = proj_dir / "agent-transcripts"
+                if not transcripts_dir.is_dir():
+                    continue
+                for entry in transcripts_dir.iterdir():
+                    if entry.is_dir():
+                        jsonl = entry / f"{entry.name}.jsonl"
+                        txt = entry / f"{entry.name}.txt"
+                        cursor_map[entry.name] = str(jsonl if jsonl.is_file() else (txt if txt.is_file() else entry))
+                    elif entry.is_file() and entry.suffix.lower() in {".jsonl", ".txt"}:
+                        cursor_map[entry.stem] = str(entry)
+        except OSError:
+            pass
+
+    return grok_map, cursor_map
+
+
+def _rehome_handoff_sources(
+    conn: sqlite3.Connection,
+    old_id: str,
+    new_id_val: str | None,
+    new_agent: str,
+) -> None:
+    if not _table_exists(conn, "handoffs"):
+        return
+    rows = conn.execute(
+        "SELECT id, source_agent, source_ids, source_revisions FROM handoffs WHERE source_ids LIKE ?",
+        (f"%{old_id}%",),
+    ).fetchall()
+    for row in rows:
+        item = row_to_dict(row)
+        raw_ids = item.get("source_ids")
+        src_ids = raw_ids if isinstance(raw_ids, list) else decode(raw_ids, [])
+        if not isinstance(src_ids, list) or old_id not in src_ids:
+            continue
+        raw_revs = item.get("source_revisions")
+        revs = dict(raw_revs) if isinstance(raw_revs, dict) else decode(raw_revs, {})
+        if not isinstance(revs, dict):
+            revs = {}
+        updated_ids = src_ids
+        if new_id_val is not None:
+            deduped: list[str] = []
+            for entry in src_ids:
+                mapped = new_id_val if entry == old_id else entry
+                if mapped not in deduped:
+                    deduped.append(mapped)
+            updated_ids = deduped
+            if old_id in revs and new_id_val not in revs:
+                revs[new_id_val] = revs[old_id]
+            revs.pop(old_id, None)
+        next_agent = new_agent if item.get("source_agent") == "claude-code" else item.get("source_agent")
+        conn.execute(
+            "UPDATE handoffs SET source_agent = ?, source_ids = ?, source_revisions = ? WHERE id = ?",
+            (next_agent, encode(updated_ids), encode(revs), item["id"]),
+        )
+
+
+def _merge_duplicate_conversation_into_sibling(
+    conn: sqlite3.Connection,
+    dup: dict[str, Any],
+    sib: dict[str, Any],
+) -> None:
+    dup_id = dup["id"]
+    sib_id = sib["id"]
+
+    # Re-home content_sources BEFORE DELETE so AFTER DELETE trigger does not wipe active quotes.
+    src_rows = conn.execute(
+        """
+        SELECT id, content_id FROM content_sources
+        WHERE source_id = ? AND source_kind = 'conversation' AND deleted = 0
+        """,
+        (dup_id,),
+    ).fetchall()
+    for src in src_rows:
+        existing_on_sib = conn.execute(
+            """
+            SELECT 1 FROM content_sources
+            WHERE content_id = ? AND source_id = ? AND source_kind = 'conversation' AND deleted = 0
+            LIMIT 1
+            """,
+            (src["content_id"], sib_id),
+        ).fetchone()
+        if existing_on_sib:
+            conn.execute("DELETE FROM content_sources WHERE id = ?", (src["id"],))
+        else:
+            conn.execute(
+                "UPDATE content_sources SET source_id = ?, source_title = ?, source_agent = ? WHERE id = ?",
+                (sib_id, sib["title"], sib["agent"], src["id"]),
+            )
+
+    if _table_exists(conn, "working_tasks"):
+        conn.execute(
+            """
+            UPDATE working_tasks
+            SET source_conversation_id = ?,
+                last_agent = CASE WHEN last_agent = 'claude-code' THEN ? ELSE last_agent END
+            WHERE source_conversation_id = ?
+            """,
+            (sib_id, sib["agent"], dup_id),
+        )
+
+    _rehome_handoff_sources(conn, dup_id, sib_id, sib["agent"])
+
+    if _table_exists(conn, "processing_jobs"):
+        from app.services.processing_jobs import cancel_conversation_jobs
+        cancel_conversation_jobs(conn, dup_id)
+
+    for tbl in ("processing_sources", "distillation_queue", "conversation_handoff_pages", "conversation_relay_index"):
+        if _table_exists(conn, tbl):
+            conn.execute(f"DELETE FROM {tbl} WHERE conversation_id = ?", (dup_id,))
+
+    conn.execute("DELETE FROM conversations WHERE id = ?", (dup_id,))
+
+
+def _repair_misattributed_with_conn(conn: sqlite3.Connection, *, home_dir) -> dict[str, int]:
+    from pathlib import Path as _Path
+    from app.adapters.host_attribution import infer_host_from_transcript_path
+
+    grok_dirs, cursor_files = _scan_foreign_session_dirs(_Path(home_dir))
+    rows = conn.execute(
+        "SELECT * FROM conversations WHERE agent = 'claude-code' ORDER BY updated_at ASC, id ASC"
+    ).fetchall()
+
+    stats = {
+        "inspected": len(rows),
+        "cursor_duplicates_merged": 0,
+        "cursor_reclassified": 0,
+        "grok_duplicates_merged": 0,
+        "grok_reclassified": 0,
+        "other_duplicates_merged": 0,
+        "other_reclassified": 0,
+        "total_repaired": 0,
+    }
+
+    for row in rows:
+        conv = row_to_dict(row)
+        cid = conv["id"]
+        ext = str(conv.get("external_id") or "").strip()
+        source_path = str(conv.get("source_path") or "").strip()
+        sid = ext[len("claude-code:"):] if ext.startswith("claude-code:") else ""
+
+        inferred_host = infer_host_from_transcript_path(source_path) if source_path else None
+        if inferred_host == "claude-code":
+            continue
+
+        target_host: str | None = inferred_host
+        target_source_path: str | None = source_path or None
+        target_sid = ""
+
+        if target_host is None and sid and sid != "updates":
+            sib_row = conn.execute(
+                """
+                SELECT * FROM conversations
+                WHERE agent != 'claude-code' AND external_id = (agent || ':' || ?)
+                ORDER BY updated_at DESC, id DESC
+                LIMIT 1
+                """,
+                (sid,),
+            ).fetchone()
+            if sib_row:
+                sib = row_to_dict(sib_row)
+                target_host = sib["agent"]
+                target_sid = sid
+            elif sid in grok_dirs:
+                target_host = "grok-build"
+                target_sid = sid
+                target_source_path = grok_dirs[sid]
+            elif sid in cursor_files:
+                target_host = "cursor"
+                target_sid = sid
+                target_source_path = cursor_files[sid]
+
+        if target_host is None:
+            continue
+
+        if target_host == "grok-build":
+            if not target_sid:
+                if source_path:
+                    p = _Path(source_path)
+                    if p.stem.lower() in {"updates", "session", "events", "messages"} and p.parent.name not in {"", "sessions"}:
+                        target_sid = p.parent.name
+                    else:
+                        target_sid = p.stem
+                if not target_sid and sid and sid != "updates":
+                    target_sid = sid
+                if not target_sid:
+                    target_sid = cid
+        elif not target_sid:
+            if sid and sid != "updates":
+                target_sid = sid
+            elif source_path:
+                target_sid = _Path(source_path).stem
+            else:
+                target_sid = cid
+
+        sib = None
+        candidate_sids = list(dict.fromkeys([
+            x for x in (target_sid, sid, _Path(source_path).stem if source_path else "")
+            if x and x != "updates"
+        ]))
+        for cand_sid in candidate_sids:
+            sib_row = conn.execute(
+                "SELECT * FROM conversations WHERE agent = ? AND external_id = ? AND id != ? LIMIT 1",
+                (target_host, f"{target_host}:{cand_sid}", cid),
+            ).fetchone()
+            if sib_row:
+                sib = row_to_dict(sib_row)
+                break
+        if sib is None and source_path:
+            sib_row = conn.execute(
+                "SELECT * FROM conversations WHERE agent = ? AND source_path = ? AND id != ? LIMIT 1",
+                (target_host, source_path, cid),
+            ).fetchone()
+            if sib_row:
+                sib = row_to_dict(sib_row)
+
+        if target_host == "cursor":
+            merged_key, reclass_key = "cursor_duplicates_merged", "cursor_reclassified"
+        elif target_host == "grok-build":
+            merged_key, reclass_key = "grok_duplicates_merged", "grok_reclassified"
+        else:
+            merged_key, reclass_key = "other_duplicates_merged", "other_reclassified"
+
+        if sib is not None:
+            _merge_duplicate_conversation_into_sibling(conn, conv, sib)
+            stats[merged_key] += 1
+            stats["total_repaired"] += 1
+            continue
+
+        new_ext = f"{target_host}:{target_sid}" if target_sid else None
+        raw_msgs = conv.get("messages")
+        msgs = raw_msgs if isinstance(raw_msgs, list) else decode(raw_msgs, [])
+        if not isinstance(msgs, list):
+            msgs = []
+        raw_process_summary = row["process_summary"] if isinstance(row["process_summary"], str) else encode(conv.get("process_summary") or [])
+        conv_for_title = {**conv, "process_summary": raw_process_summary}
+        new_title = _derive_reclassified_title(target_host, target_sid, conv_for_title, msgs)
+        new_hash = compute_content_revision_hash(
+            new_title, msgs, raw_process_summary, conv.get("cwd")
+        )
+        conn.execute(
+            """
+            UPDATE conversations
+            SET agent = ?, external_id = ?, title = ?, source_path = ?, content_hash = ?
+            WHERE id = ?
+            """,
+            (target_host, new_ext, new_title, target_source_path, new_hash, cid),
+        )
+        conn.execute(
+            """
+            UPDATE content_sources
+            SET source_agent = ?, source_title = ?
+            WHERE source_id = ? AND source_kind = 'conversation' AND deleted = 0
+            """,
+            (target_host, new_title, cid),
+        )
+        if _table_exists(conn, "working_tasks"):
+            conn.execute(
+                """
+                UPDATE working_tasks
+                SET last_agent = ?
+                WHERE source_conversation_id = ? AND last_agent = 'claude-code'
+                """,
+                (target_host, cid),
+            )
+        _rehome_handoff_sources(conn, cid, None, target_host)
+        _update_relay_index(
+            conn,
+            cid,
+            new_hash,
+            {
+                **conv,
+                "agent": target_host,
+                "external_id": new_ext,
+                "title": new_title,
+                "source_path": target_source_path,
+                "process_summary": raw_process_summary,
+                "messages": msgs,
+            },
+        )
+        stats[reclass_key] += 1
+        stats["total_repaired"] += 1
+
+    if stats["total_repaired"] > 0:
+        if _table_exists(conn, "relay_discovery_snapshots"):
+            conn.execute("DELETE FROM relay_discovery_snapshots")
+        try:
+            from app.config import settings
+            from app.services import handoff_service
+
+            db_key = str(settings.db_path)
+            with handoff_service._RELAY_SNAPSHOT_CACHE_LOCK:
+                stale = [k for k in handoff_service._RELAY_SNAPSHOT_MEM_CACHE if k[0] == db_key]
+                for k in stale:
+                    handoff_service._RELAY_SNAPSHOT_MEM_CACHE.pop(k, None)
+        except Exception:
+            pass
+        log_audit(
+            actor="system",
+            action="conversation.repair_misattributed_hooks",
+            target="claude-code",
+            result=json.dumps(stats, sort_keys=True),
+            conn=conn,
+        )
+
+    return stats
+
+
+def repair_misattributed_claude_code_conversations(
+    conn: sqlite3.Connection | None = None,
+    *,
+    home: Any = None,
+) -> dict[str, int]:
+    """Repair claude-code rows created by foreign host hooks (Cursor, Grok Build, etc.)."""
+    from pathlib import Path as _Path
+
+    home_dir = _Path(home).expanduser() if home is not None else _Path.home()
+    if conn is not None:
+        return _repair_misattributed_with_conn(conn, home_dir=home_dir)
+    with db() as own_conn:
+        return _repair_misattributed_with_conn(own_conn, home_dir=home_dir)

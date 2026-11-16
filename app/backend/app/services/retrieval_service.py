@@ -1428,11 +1428,11 @@ def bootstrap_working_memory(
                 pending_unconfirmed_handoff = True
             else:
                 cont = lookup_continuation(consumer_id, resolved_pid, query)
-                if cont and cont.get("status") in {
-                    "awaiting_confirmation",
-                    "ambiguous_continuation",
-                    "confirmation_review_required",
-                } and cont.get("must_not_execute"):
+                if (
+                    cont
+                    and cont.get("status") not in {"ready", "not_addressed", "none", None}
+                    and bool(cont.get("must_not_execute"))
+                ):
                     pending_unconfirmed_handoff = True
 
         must_not_execute = bootstrap_must_not_execute(

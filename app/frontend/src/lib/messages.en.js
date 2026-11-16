@@ -1518,4 +1518,9 @@ export const en = {
   "查看未归属聊天": "View unassigned chats",
   "请先在任务中关联原始聊天，再提炼有来源的经验。": "Link the original conversation to this task before promoting a sourced lesson.",
   "必填：粘贴关联聊天中真实存在的原话，不接受自行编写的验证结果。": "Required: quote actual text from the linked conversation, not a self-authored verification claim.",
+  "自动汇总全局常驻核心规则与使用习惯，可直接粘贴至 AGENTS.md 或 CLAUDE.md。": "Automatically summarizes global always-on core rules and working habits, ready to paste into AGENTS.md or CLAUDE.md.",
+  "时间戳必须带时区（字段：{field}）。": "Timestamp must include a timezone (field: {field}).",
+  "token 计数必须是非负整数（字段：{field}）。": "Token count must be a non-negative integer (field: {field}).",
+  "价格必须是非负有限小数（字段：{field}）。": "Price must be a non-negative finite decimal (field: {field}).",
+  "有些内容不符合要求（字段：{fields}）。请检查必填项、所选内容和输入格式后再试。": "Some details do not meet the requirements (fields: {fields}). Check required fields, selections and input formats, then try again.",
 };

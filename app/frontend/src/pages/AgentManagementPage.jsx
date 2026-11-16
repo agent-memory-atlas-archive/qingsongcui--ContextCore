@@ -476,9 +476,35 @@ export function AgentWorkspace({ host, allHosts = [], tab, revision, onChanged, 
           if (output.id !== id || !planMatchesAgent(output, hostId)) throw new Error();
         } catch { output = { id, status: 'unknown', note: t('应用结果未知，请重新读取事务状态；不要重复提交。') }; }
         const readback = await loadHostReadback(planMatchesAgent(output, hostId) ? output : plan);
-        if (isCurrent()) { setResult(output); setHostReadback(readback); setError(failure); }
+        if (isCurrent()) {
+          if (output.status === 'planned') {
+            setPlan(output);
+            setResult(null);
+          } else {
+            setResult(output);
+          }
+          setHostReadback(readback);
+          setError(failure);
+        }
       }
       if (isCurrent()) refresh();
+    });
+  }
+  async function reloadPlanResult() {
+    if (!isCurrent() || !plan?.id) return;
+    await execute(async () => {
+      const output = await request(`/api/manage/plans/${encodeURIComponent(plan.id)}`);
+      if (output.id !== plan.id || !planMatchesAgent(output, hostId)) throw new Error(t('应用读回与当前助手不匹配，请重新读取更改记录。'));
+      const readback = await loadHostReadback(output);
+      if (!isCurrent()) return;
+      if (output.status === 'planned') {
+        setPlan(output);
+        setResult(null);
+      } else {
+        setResult(output);
+      }
+      setHostReadback(readback);
+      refresh();
     });
   }
   async function exportAssets() {
@@ -664,13 +690,17 @@ export function AgentWorkspace({ host, allHosts = [], tab, revision, onChanged, 
         receipt = await request(`/api/manage/plans/${encodeURIComponent(selected.plan.id)}`);
         if (receipt.id !== selected.plan.id || !planMatchesAgent(receipt, selected.hostId)) throw new Error(t('应用读回与当前助手不匹配，请重新读取更改记录。'));
       } catch (failure) {
-        receipt = { id: selected.plan.id, status: 'unknown', payload: { metadata: { host_id: selected.hostId } } };
+        receipt = { id: selected.plan.id, status: 'unknown', note: t('应用结果未知，请重新读取事务状态；不要重复提交。'), payload: { metadata: { host_id: selected.hostId } } };
         applyError = failure;
       }
       if (!isCurrent()) return;
       if (applyError) setError(applyError);
-      setSyncReview(current => ({ ...current, result: receipt }));
-      setSyncTarget(current => ({ ...current, applied: { ...current.applied, [selected.hostId]: receipt.status } }));
+      if (receipt.status === 'planned') {
+        setSyncReview(current => ({ ...current, plan: receipt, result: null }));
+      } else {
+        setSyncReview(current => ({ ...current, result: receipt }));
+        setSyncTarget(current => ({ ...current, applied: { ...current.applied, [selected.hostId]: receipt.status } }));
+      }
       try {
         const state = await request(`/api/manage/hosts/${encodeURIComponent(selected.hostId)}/state`);
         if (!isCurrent() || state.host_id !== selected.hostId) return;
@@ -679,6 +709,27 @@ export function AgentWorkspace({ host, allHosts = [], tab, revision, onChanged, 
         if (isCurrent()) setError(new Error(t('配置已提交，但回读失败。请重新读取宿主状态。')));
       }
       if (isCurrent()) refresh();
+    });
+  }
+  async function reloadSyncPlanResult() {
+    if (!syncReview?.plan?.id) return;
+    await execute(async () => {
+      const selected = syncReview;
+      const receipt = await request(`/api/manage/plans/${encodeURIComponent(selected.plan.id)}`);
+      if (receipt.id !== selected.plan.id || !planMatchesAgent(receipt, selected.hostId)) throw new Error(t('应用读回与当前助手不匹配，请重新读取更改记录。'));
+      let hostReadback = null;
+      try {
+        const state = await request(`/api/manage/hosts/${encodeURIComponent(selected.hostId)}/state`);
+        if (state.host_id === selected.hostId) hostReadback = { state, resources: readbackResources(receipt, state, {}) };
+      } catch {}
+      if (!isCurrent()) return;
+      if (receipt.status === 'planned') {
+        setSyncReview(current => (current ? { ...current, plan: receipt, result: null, hostReadback } : current));
+      } else {
+        setSyncReview(current => (current ? { ...current, result: receipt, hostReadback } : current));
+        setSyncTarget(current => (current ? { ...current, applied: { ...current.applied, [selected.hostId]: receipt.status } } : current));
+      }
+      refresh();
     });
   }
 
@@ -839,7 +890,7 @@ export function AgentWorkspace({ host, allHosts = [], tab, revision, onChanged, 
       {!activation.switchOnly ? <><CatalogChoice collection="models" label={t('请求模型')} value={activationModel} allowNone={false} providerId={activation.providerId} scope="all" revision={tick} extraOptions={[...(activation.seedModel ? [activation.seedModel] : []), ...(activation.aliases || [])]} onChange={(value, chosenModel) => { setActivationModel(value); setActivation({ ...activation, chosenModel }); }} /><p>{t('没有可选模型？先返回“添加模型”，可读取本机缓存或明确刷新服务商目录。')}</p></> : null}
       {hostId === 'claude-code' && tab === 'providers' ? <CatalogChoice collection="providers" label={t('要替换的旧供应商')} value={replacement} onChange={setReplacement} scope="all" revision={tick} excludeIds={[activation.providerId]} noneLabel={t('不替换旧定义')} allowNone={!activation.switchOnly} /> : null}
       <ErrorNotice error={error} /><footer className="modal-actions"><Button onClick={() => setActivation(null)}>{t('取消')}</Button><Button type="submit" variant="primary" busy={busy} disabled={activation.switchOnly ? !replacement : !activationModel}>{t('预览应用到 {agent}', { agent: name })}</Button></footer></form></Modal> : null}
-    {plan ? <AgentPlanDialog key={plan.id} plan={plan} definition={planDescription || Object.keys(plan.payload?.metadata?.entity_versions || {}).map(id => [...list(providers.data), ...list(assets.data), ...list(resource.data)].find(item => item.id === id)?.name).filter(Boolean).join(' · ')} result={result} hostReadback={hostReadback} agent={name} category={category} busy={busy} error={error} valid={isCurrent() && planMatchesAgent(plan, hostId)} onApply={applyPlan} onClose={() => { setPlan(null); setPlanDescription(''); setResult(null); setHostReadback(null); setError(null); }} /> : null}
+    {plan ? <AgentPlanDialog key={plan.id} plan={plan} definition={planDescription || Object.keys(plan.payload?.metadata?.entity_versions || {}).map(id => [...list(providers.data), ...list(assets.data), ...list(resource.data)].find(item => item.id === id)?.name).filter(Boolean).join(' · ')} result={result} hostReadback={hostReadback} agent={name} category={category} busy={busy} error={error} valid={isCurrent() && planMatchesAgent(plan, hostId)} onApply={applyPlan} onReloadResult={reloadPlanResult} onClose={() => { setPlan(null); setPlanDescription(''); setResult(null); setHostReadback(null); setError(null); }} /> : null}
     {secretTarget ? <Modal title={`${name} · ${category} · ${t('设置密钥')} · ${secretTarget.item.name}`} busy={busy} onClose={() => { setSecretTarget(null); setSecret(''); }}><form className="management-form agent-form" onSubmit={event => { event.preventDefault(); execute(async () => { await mutate(`/api/manage/${secretTarget.collection}/${encodeURIComponent(secretTarget.item.id)}/credential`, 'POST', { secret }); if (!isCurrent()) return; setSecret(''); setSecretTarget(null); refresh(); setNotice(t('凭据已提交到本机凭据库；是否可用以状态读回为准。')); }); }}><p>{t('密钥只提交给本机凭据库，不保存在浏览器草稿、导出文件或管理定义中。')}</p><p>{t('这个密钥属于共享定义；引用它的其他助手也可能使用它。不会自动应用配置或测试调用。')}</p><Field label={secretTarget.item.name}><input type="password" required value={secret} autoComplete="new-password" onChange={event => setSecret(event.target.value)} /></Field><ErrorNotice error={error} /><footer className="modal-actions"><Button onClick={() => { setSecretTarget(null); setSecret(''); }}>{t('取消')}</Button><Button type="submit" variant="primary" busy={busy} disabled={!secret.trim()}>{t('保存到凭据库')}</Button></footer></form></Modal> : null}
     {remove ? <Modal title={`${name} · ${tabTitle(remove.collection)} · ${t('删除共享定义')}`} busy={busy} onClose={() => setRemove(null)}><p className="modal-copy">{t('删除 {name} 的管理定义。宿主文件中的自有条目需要先通过卸载计划移除。', { name: remove.item.name })}</p><p className="modal-copy">{t('这是共享资料库中的定义，删除也会影响其他引用；不会擅自删除助手里的非托管文件。')}</p><ErrorNotice error={error} /><footer className="modal-actions"><Button onClick={() => setRemove(null)}>{t('取消')}</Button><Button variant="danger" busy={busy} onClick={() => execute(async () => { await mutate(`${pathFor(remove.collection)}/${encodeURIComponent(remove.item.id)}?expected_version=${remove.item.version}`, 'DELETE'); if (isCurrent()) { setRemove(null); refresh(); } })}>{t('确认删除定义')}</Button></footer></Modal> : null}
     {importing ? <ImportDialog agent={name} agentId={['advanced', 'library'].includes(tab) ? undefined : hostId} category={tab} target={importing.target} isCurrent={isCurrent} onClose={() => setImporting(null)} onChanged={refresh} /> : null}
@@ -857,7 +908,7 @@ export function AgentWorkspace({ host, allHosts = [], tab, revision, onChanged, 
       {syncTarget.preview ? <div>{Object.entries(syncTarget.preview.results || {}).map(([id, entry]) => <section key={id}><h3>{syncHostLabel(id)}</h3>{entry.plan ? <><StatusBadge value={syncTarget.applied?.[id] || entry.plan.status} /><Button disabled={busy || Boolean(syncTarget.applied?.[id])} onClick={() => { setError(null); setSyncReview({ hostId: id, plan: entry.plan, result: null }); }}>{t('查看差异并确认')}</Button></> : <><StatusBadge value="failed" /><p role="alert">{formatBackendWarning(entry.error, 422) || t('生成预览失败，请检查该宿主支持范围。')}</p></>}</section>)}</div> : null}
       <ErrorNotice error={error} /><footer className="modal-actions"><Button onClick={() => { setSyncTarget(null); setSyncConflictQueue([]); setError(null); }}>{t('关闭')}</Button><Button type="submit" variant="primary" busy={busy} disabled={!syncTarget.hostIds.length}>{t('生成各宿主预览')}</Button></footer>
     </form></Modal> : null}
-    {syncReview ? <AgentPlanDialog key={`${syncReview.hostId}:${syncReview.plan?.id || ''}`} plan={syncReview.plan} definition={[syncTarget?.item.name, syncConflictQueue.length > 0 ? t('剩余 {count} 个冲突宿主待确认', { count: syncConflictQueue.length }) : ''].filter(Boolean).join(' · ')} result={syncReview.result} hostReadback={syncReview.hostReadback} agent={syncHostLabel(syncReview.hostId)} category={category} busy={busy} error={error} valid={isCurrent() && planMatchesAgent(syncReview.plan, syncReview.hostId)} onApply={applySyncPlan} onClose={closeSyncReview} /> : null}
+    {syncReview ? <AgentPlanDialog key={`${syncReview.hostId}:${syncReview.plan?.id || ''}`} plan={syncReview.plan} definition={[syncTarget?.item.name, syncConflictQueue.length > 0 ? t('剩余 {count} 个冲突宿主待确认', { count: syncConflictQueue.length }) : ''].filter(Boolean).join(' · ')} result={syncReview.result} hostReadback={syncReview.hostReadback} agent={syncHostLabel(syncReview.hostId)} category={category} busy={busy} error={error} valid={isCurrent() && planMatchesAgent(syncReview.plan, syncReview.hostId)} onApply={applySyncPlan} onReloadResult={reloadSyncPlanResult} onClose={closeSyncReview} /> : null}
     {leave ? <Modal title={t('离开当前编辑？')} onClose={() => setLeave(null)}><p className="modal-copy">{t('已保存的定义不会丢失。定义与模型表单会保留为这个助手的临时草稿；未保存的密钥和导入内容会清空。旧的应用预览不会带到新页面。')}</p><footer className="modal-actions"><Button onClick={() => setLeave(null)}>{t('继续编辑')}</Button><Button onClick={() => choose(leave.id, leave.category)}>{t('确认离开')}</Button></footer></Modal> : null}
   </>;
 }

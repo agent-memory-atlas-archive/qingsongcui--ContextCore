@@ -23,11 +23,36 @@ CODE_DIRECTORIES = ("app", "app/adapters", "app/integrations", "app/routers", "a
 RAW_CODE_RESOURCES = ("app/integrations/cc_hook.py",)
 
 
+def _collect_package_python_files(directory: Path, collected: set[Path], visited: set[Path]) -> None:
+    """Recursively collect Python sources from a package directory and valid Python subpackages."""
+    if not directory.is_dir():
+        return
+    resolved = directory.resolve(strict=False)
+    if resolved in visited:
+        return
+    visited.add(resolved)
+    for entry in sorted(directory.iterdir(), key=lambda path: path.name):
+        if entry.name.startswith(".") or entry.name == "__pycache__":
+            continue
+        if entry.is_file() and entry.suffix == ".py":
+            collected.add(entry)
+        elif (
+            entry.is_dir()
+            and entry.name.isidentifier()
+            and (entry / "__init__.py").is_file()
+        ):
+            _collect_package_python_files(entry, collected, visited)
+
+
 def source_files(backend: Path) -> list[Path]:
-    result = [path for directory in CODE_DIRECTORIES
-              for path in (backend / directory).glob("*.py")
-              if not path.name.startswith(".") and path.is_file()]
-    result += [backend / relative for relative in RESOURCE_FILES if (backend / relative).is_file()]
+    result: set[Path] = set()
+    visited: set[Path] = set()
+    for directory in CODE_DIRECTORIES:
+        _collect_package_python_files(backend / directory, result, visited)
+    for relative in RESOURCE_FILES:
+        resource_path = backend / relative
+        if resource_path.is_file():
+            result.add(resource_path)
     return sorted(result)
 
 

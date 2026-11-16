@@ -1612,7 +1612,7 @@ def continuation_contract(handoff: dict[str, Any], consumer_id: str | None = Non
         "source_ids": handoff.get("source_ids") or [],
         "source_revisions": handoff.get("source_revisions") or {},
         "must_not_execute": True,
-        "execution_mode": "approved",
+        "execution_mode": "discussion_only",
         "selected_task_id": None,
         "resume_from": None,
         "parallel_open_tasks": [],
@@ -1632,16 +1632,6 @@ def continuation_contract(handoff: dict[str, Any], consumer_id: str | None = Non
 
     is_discussion_only = False
     with db() as conn:
-        proof_valid = has_explicit_confirmation(handoff, conn)
-        try:
-            validate_source_revisions(conn, handoff)
-        except HTTPException:
-            payload["status"] = "stale"
-            payload["message"] = STALE_HANDOFF_MESSAGE
-            payload["card"] = {field: STALE_HANDOFF_MESSAGE for field in HANDOFF_CARD_FIELDS}
-            payload["readback"] = d005_readback(payload["card"])
-            return payload
-
         open_tasks, completed_tasks = list_project_tasks(conn, handoff["project_id"]) if handoff.get("project_id") else ([], [])
         selected = [
             item for item in open_tasks
@@ -1651,6 +1641,18 @@ def continuation_contract(handoff: dict[str, Any], consumer_id: str | None = Non
         payload["selected_task_id"] = selected_task_obj["id"] if selected_task_obj else None
         is_discussion_only = bool(selected_task_obj and selected_task_obj.get("execution_mode") == "discussion_only")
         payload["execution_mode"] = "discussion_only" if is_discussion_only else "approved"
+
+        proof_valid = has_explicit_confirmation(handoff, conn)
+        try:
+            validate_source_revisions(conn, handoff)
+        except HTTPException:
+            payload["status"] = "stale"
+            payload["execution_mode"] = "discussion_only"
+            payload["message"] = STALE_HANDOFF_MESSAGE
+            payload["card"] = {field: STALE_HANDOFF_MESSAGE for field in HANDOFF_CARD_FIELDS}
+            payload["readback"] = d005_readback(payload["card"])
+            return payload
+
         payload["parallel_open_tasks"] = [
             _task_candidate(item)
             for item in open_tasks
@@ -1678,6 +1680,7 @@ def continuation_contract(handoff: dict[str, Any], consumer_id: str | None = Non
     if status == "cancelled":
         payload["status"] = "cancelled"
         payload["must_not_execute"] = True
+        payload["execution_mode"] = "discussion_only"
         payload["message"] = "Handoff was cancelled; cannot execute."
         return payload
     if status != "confirmed":
@@ -2358,7 +2361,8 @@ def _save_relay_discovery_snapshot(conn, scope_keys: list[str], mapping: dict[st
         )
 
 
-def _lookup_relay_discovery_snapshot(conn, index: str, scope_keys: list[str]) -> str:
+def _find_active_relay_snapshot_mapping(conn, scope_keys: list[str]) -> dict[str, Any] | None:
+    """Return the first active index->conversation mapping across fallback scope keys, or None."""
     cutoff = _relay_snapshot_cutoff()
     cutoff_ms = project_service._ts_epoch_ms(cutoff)
     table_exists = conn.execute(
@@ -2390,28 +2394,41 @@ def _lookup_relay_discovery_snapshot(conn, index: str, scope_keys: list[str]) ->
             mem_ms = project_service._ts_epoch_ms(mem_updated_at)
             if mem_ms >= cutoff_ms and mem_ms > best_ms and isinstance(mem_mapping, dict):
                 best_mapping = mem_mapping
-                best_ms = mem_ms
-        if best_mapping is None:
-            continue
-        conv_id = str(best_mapping.get(index) or "").strip()
-        if not conv_id:
-            raise HTTPException(409, {
-                "code": "relay_selection_unavailable",
-                "message": "This number was not in the displayed list. Refresh the list or use the exact conversation ID.",
-                "must_not_execute": True,
-            })
-        if not conn.execute("SELECT 1 FROM conversations WHERE id = ?", (conv_id,)).fetchone():
-            raise HTTPException(410, {
-                "code": "relay_selection_deleted",
-                "message": "The selected conversation was deleted. Refresh the list; no other conversation was loaded.",
-                "must_not_execute": True,
-            })
-        return conv_id
-    raise HTTPException(409, {
-        "code": "relay_selection_expired",
-        "message": "The displayed list is missing or expired. Refresh the list or use the exact conversation ID.",
-        "must_not_execute": True,
-    })
+        if best_mapping is not None:
+            return best_mapping
+    return None
+
+
+def _lookup_active_relay_snapshot_ids(conn, scope_keys: list[str]) -> list[str] | None:
+    """Return deduplicated conversation IDs from the active discovery snapshot, or None."""
+    best_mapping = _find_active_relay_snapshot_mapping(conn, scope_keys)
+    if best_mapping is None:
+        return None
+    return list(dict.fromkeys(str(v).strip() for v in best_mapping.values() if str(v).strip()))
+
+
+def _lookup_relay_discovery_snapshot(conn, index: str, scope_keys: list[str]) -> str:
+    best_mapping = _find_active_relay_snapshot_mapping(conn, scope_keys)
+    if best_mapping is None:
+        raise HTTPException(409, {
+            "code": "relay_selection_expired",
+            "message": "The displayed list is missing or expired. Refresh the list or use the exact conversation ID.",
+            "must_not_execute": True,
+        })
+    conv_id = str(best_mapping.get(index) or "").strip()
+    if not conv_id:
+        raise HTTPException(409, {
+            "code": "relay_selection_unavailable",
+            "message": "This number was not in the displayed list. Refresh the list or use the exact conversation ID.",
+            "must_not_execute": True,
+        })
+    if not conn.execute("SELECT 1 FROM conversations WHERE id = ?", (conv_id,)).fetchone():
+        raise HTTPException(410, {
+            "code": "relay_selection_deleted",
+            "message": "The selected conversation was deleted. Refresh the list; no other conversation was loaded.",
+            "must_not_execute": True,
+        })
+    return conv_id
 
 
 def _relay_project_names(conn, local) -> dict[str, str]:
@@ -2706,8 +2723,14 @@ def discover_relay_conversations(
     }
 
 
+_NATIVE_UUID_RE = re.compile(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}")
+
+
 def _resolve_relay_conversation_identifier(
-    identifier: str, candidates: list[dict[str, Any]]
+    identifier: str,
+    candidates: list[dict[str, Any]] | None = None,
+    *,
+    restrict_to_candidates: bool | None = None,
 ) -> dict[str, Any] | None:
     """Resolve exact native identity first; ambiguous IDs/titles require selection."""
     from app.services.conversation_service import _CONVERSATION_INDEX_COLUMNS, escape_like
@@ -2715,8 +2738,9 @@ def _resolve_relay_conversation_identifier(
     raw = str(identifier or "").strip()
     if not raw:
         return None
+    cand_list = candidates or []
     if raw.isdigit():
-        selected = next((c for c in candidates if c.get("index") == int(raw)), None)
+        selected = next((c for c in cand_list if c.get("index") == int(raw)), None)
         if not selected:
             return None
         raw = selected.get("conversation_id") or selected["id"]
@@ -2726,7 +2750,7 @@ def _resolve_relay_conversation_identifier(
         ).fetchone()
         if row:
             return dict(row)
-        native_uuid = bool(re.fullmatch(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", raw))
+        native_uuid = bool(_NATIVE_UUID_RE.fullmatch(raw))
         if native_uuid:
             rows = conn.execute(
                 f"SELECT {_CONVERSATION_INDEX_COLUMNS} FROM conversations "
@@ -2738,14 +2762,64 @@ def _resolve_relay_conversation_identifier(
                 f"SELECT {_CONVERSATION_INDEX_COLUMNS} FROM conversations WHERE external_id = ?", (raw,)
             ).fetchall()
         if not rows and not native_uuid and not raw.startswith("conv_") and ":" not in raw:
-            rows = conn.execute(
-                f"SELECT {_CONVERSATION_INDEX_COLUMNS} FROM conversations WHERE lower(title) = lower(?)", (raw,)
-            ).fetchall()
-            if not rows:
+            scoped = bool(cand_list) if restrict_to_candidates is None else restrict_to_candidates
+            if scoped:
+                cand_pairs = [
+                    (str(c.get("conversation_id") or c.get("id")), str(c.get("title") or ""))
+                    for c in cand_list
+                    if c.get("conversation_id") or c.get("id")
+                ]
+                candidate_ids = list(dict.fromkeys(cid for cid, _ in cand_pairs))
+                if candidate_ids:
+                    placeholders = ",".join("?" for _ in candidate_ids)
+                    rows = conn.execute(
+                        f"SELECT {_CONVERSATION_INDEX_COLUMNS} FROM conversations "
+                        f"WHERE id IN ({placeholders}) AND lower(title) = lower(?)",
+                        (*candidate_ids, raw),
+                    ).fetchall()
+                    if not rows:
+                        exact_display_ids = list(
+                            dict.fromkeys(cid for cid, ctitle in cand_pairs if ctitle.strip().lower() == raw.lower())
+                        )
+                        if exact_display_ids:
+                            disp_ph = ",".join("?" for _ in exact_display_ids)
+                            rows = conn.execute(
+                                f"SELECT {_CONVERSATION_INDEX_COLUMNS} FROM conversations WHERE id IN ({disp_ph})",
+                                tuple(exact_display_ids),
+                            ).fetchall()
+                    if not rows:
+                        db_like_rows = conn.execute(
+                            f"SELECT {_CONVERSATION_INDEX_COLUMNS} FROM conversations "
+                            f"WHERE id IN ({placeholders}) AND lower(title) LIKE ? ESCAPE '\\'",
+                            (*candidate_ids, "%" + escape_like(raw.lower()) + "%"),
+                        ).fetchall()
+                        rows_by_id = {r["id"]: r for r in db_like_rows}
+                        disp_like_ids = [
+                            cid for cid, ctitle in cand_pairs
+                            if cid not in rows_by_id and raw.lower() in ctitle.lower()
+                        ]
+                        if disp_like_ids:
+                            disp_ph = ",".join("?" for _ in disp_like_ids)
+                            for r in conn.execute(
+                                f"SELECT {_CONVERSATION_INDEX_COLUMNS} FROM conversations WHERE id IN ({disp_ph})",
+                                tuple(disp_like_ids),
+                            ).fetchall():
+                                rows_by_id[r["id"]] = r
+                        rows = list(rows_by_id.values())
+            else:
                 rows = conn.execute(
-                    f"SELECT {_CONVERSATION_INDEX_COLUMNS} FROM conversations WHERE lower(title) LIKE ? ESCAPE '\\'",
-                    ("%" + escape_like(raw.lower()) + "%",),
+                    f"SELECT {_CONVERSATION_INDEX_COLUMNS} FROM conversations WHERE lower(title) = lower(?)",
+                    (raw,),
                 ).fetchall()
+                if not rows:
+                    like_rows = conn.execute(
+                        f"SELECT {_CONVERSATION_INDEX_COLUMNS} FROM conversations "
+                        "WHERE lower(title) LIKE ? ESCAPE '\\'",
+                        ("%" + escape_like(raw.lower()) + "%",),
+                    ).fetchall()
+                    # Unlisted global title fragments may surface ambiguity (422), never silently load a single unlisted match.
+                    if len(like_rows) > 1:
+                        rows = like_rows
         if len(rows) > 1:
             raise HTTPException(422, {
                 "code": AMBIGUOUS_CONVERSATION_CODE,
@@ -2793,11 +2867,13 @@ def relay_conversation(
             consumer=target_agent, limit=limit, offset=offset, sync_first=sync_first,
             language=language, link_unlinked=True, cwd=cwd, project_id=project_id,
         )
+    raw_ident = str(conversation_id).strip()
     frozen_conv_id: str | None = None
-    if str(conversation_id).strip().isdigit():
+    restrict_to_candidates = False
+    if raw_ident.isdigit():
         # A number printed by an earlier listing must resolve to the record the
         # user actually saw, even when background sync inserted newer chats.
-        index = str(int(str(conversation_id).strip()))
+        index = str(int(raw_ident))
         from app.services import conversation_service
         with db() as conn:
             conversation_service._ensure_relay_index(conn)
@@ -2807,20 +2883,37 @@ def relay_conversation(
             frozen_conv_id = _lookup_relay_discovery_snapshot(
                 conn, index, _relay_scope_keys(target_agent, scoped_pid, scoped_cwd),
             )
+    elif not raw_ident.startswith("conv_") and ":" not in raw_ident and not _NATIVE_UUID_RE.fullmatch(raw_ident):
+        from app.services import conversation_service
+        with db() as conn:
+            conversation_service._ensure_relay_index(conn)
+            scoped_pid, _scoped_pname, scoped_cwd = _resolve_relay_scope(
+                conn, consumer_norm=target_agent, cwd=cwd, project_id=project_id, local=local,
+            )
+            snapshot_ids = _lookup_active_relay_snapshot_ids(
+                conn, _relay_scope_keys(target_agent, scoped_pid, scoped_cwd),
+            )
+        if snapshot_ids is not None:
+            candidates = [{"conversation_id": cid} for cid in snapshot_ids]
+            restrict_to_candidates = True
     selected_conv = _resolve_relay_conversation_identifier(
-        frozen_conv_id or str(conversation_id), candidates,
+        frozen_conv_id or raw_ident,
+        candidates,
+        restrict_to_candidates=False if frozen_conv_id else restrict_to_candidates,
     )
     synced_agents = []
     if sync_first:
         from app.services import connection_service
         synced_agents = connection_service.sync_conversation_for_relay(
-            (selected_conv.get("external_id") or selected_conv["id"]) if selected_conv else str(conversation_id),
+            (selected_conv.get("external_id") or selected_conv["id"]) if selected_conv else raw_ident,
             agent=selected_conv.get("agent") if selected_conv else None,
             source_path=selected_conv.get("source_path") if selected_conv else None,
         )
+        is_numeric = raw_ident.isdigit()
         selected_conv = _resolve_relay_conversation_identifier(
-            selected_conv["id"] if selected_conv and str(conversation_id).strip().isdigit() else str(conversation_id),
+            selected_conv["id"] if selected_conv and is_numeric else raw_ident,
             candidates,
+            restrict_to_candidates=False if (selected_conv and is_numeric) else restrict_to_candidates,
         )
     if not selected_conv:
         raise HTTPException(status_code=404, detail=f"Conversation '{conversation_id}' not found")

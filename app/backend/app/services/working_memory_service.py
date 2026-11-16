@@ -439,6 +439,18 @@ def ensure_legacy_tasks_synced(
                 title = _bound_str(r["title"] or "Untitled Task", MAX_TITLE_CHARS)
                 norm_title = normalize_task_title(title) or legacy_id
                 body = _bound_str(r["content"] or "", MAX_GOAL_CHARS)
+                raw_tags = decode(r["tags"], [])
+                tag_set = {str(t).strip().lower() for t in (raw_tags if isinstance(raw_tags, list) else []) if t}
+                mapped_mode = (
+                    "discussion_only"
+                    if (
+                        "discussion_only" in tag_set
+                        or "execution_mode:discussion_only" in tag_set
+                        or _DISCUSSION_ONLY_CUE_RE.search(f"{title} {body}")
+                    )
+                    else "approved"
+                )
+                initial_state = body or ("正在讨论方案，尚未授权改代码" if mapped_mode == "discussion_only" else "")
                 created_at = r["created_at"] or now_iso()
                 updated_at = r["updated_at"] or created_at
                 completed_at = updated_at if mapped_status == "completed" else None
@@ -451,7 +463,7 @@ def ensure_legacy_tasks_synced(
                         failed_attempts, blockers, next_steps, cwd, git_branch,
                         last_agent, source_conversation_id, legacy_content_id,
                         version, created_at, updated_at, completed_at
-                    ) VALUES (?, ?, ?, ?, ?, 'approved', ?, '[]', ?, '[]', '[]', '[]', '[]', NULL, NULL, ?, NULL, ?, 1, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, '[]', ?, '[]', '[]', '[]', '[]', NULL, NULL, ?, NULL, ?, 1, ?, ?, ?)
                     """,
                     (
                         tid,
@@ -459,8 +471,9 @@ def ensure_legacy_tasks_synced(
                         title,
                         norm_title,
                         mapped_status,
+                        mapped_mode,
                         body or title,
-                        body,
+                        initial_state,
                         r["agent"],
                         legacy_id,
                         created_at,

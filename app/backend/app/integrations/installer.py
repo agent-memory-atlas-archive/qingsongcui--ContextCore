@@ -307,44 +307,51 @@ def _remove_codex_toml(existing_toml: str) -> str:
 
 
 def _clean_hook_entry(entry: Any, owned_cmds: set[str]) -> tuple[Any | None, bool]:
-    """Clean owned commands from a hook entry.
+    """Clean owned commands from a hook entry while preserving foreign siblings.
 
-    Returns (cleaned_entry_or_None, was_modified).
-    If cleaned_entry is None, the entry should be removed entirely.
-    Preserves foreign sibling commands in nested hooks structures.
-    Uses exact command matching; never substring matching.
+    Inspects both top-level ``command`` and nested ``hooks`` lists rather than
+    returning early on the first match. Uses exact command matching.
     """
     if not isinstance(entry, dict):
         return entry, False
 
-    # Case A: Top-level command
-    if "command" in entry and isinstance(entry["command"], str):
-        if entry["command"] in owned_cmds:
-            return None, True
+    new_entry = dict(entry)
+    modified = False
+
+    cmd = new_entry.get("command")
+    if isinstance(cmd, str) and cmd in owned_cmds:
+        new_entry.pop("command", None)
+        if new_entry.get("type") == "command" and isinstance(new_entry.get("hooks"), list):
+            new_entry.pop("type", None)
+        modified = True
+
+    sub_hooks = new_entry.get("hooks")
+    if isinstance(sub_hooks, list):
+        cleaned_sub_hooks = []
+        sub_modified = False
+        for sub_h in sub_hooks:
+            if isinstance(sub_h, dict):
+                cleaned_sub, changed = _clean_hook_entry(sub_h, owned_cmds)
+                sub_modified |= changed
+                if cleaned_sub is not None:
+                    cleaned_sub_hooks.append(cleaned_sub)
+            else:
+                cleaned_sub_hooks.append(sub_h)
+        if sub_modified:
+            modified = True
+            if cleaned_sub_hooks:
+                new_entry["hooks"] = cleaned_sub_hooks
+            else:
+                new_entry.pop("hooks", None)
+
+    if not modified:
         return entry, False
 
-    # Case B: Nested hooks array
-    if "hooks" in entry and isinstance(entry["hooks"], list):
-        orig_sub_hooks = entry["hooks"]
-        cleaned_sub_hooks = []
-        modified = False
-        for sub_h in orig_sub_hooks:
-            if isinstance(sub_h, dict) and isinstance(sub_h.get("command"), str) and sub_h["command"] in owned_cmds:
-                modified = True
-                continue
-            cleaned_sub_hooks.append(sub_h)
-
-        if not modified:
-            return entry, False
-
-        if not cleaned_sub_hooks:
-            return None, True
-
-        new_entry = dict(entry)
-        new_entry["hooks"] = cleaned_sub_hooks
-        return new_entry, True
-
-    return entry, False
+    has_top_cmd = isinstance(new_entry.get("command"), str) and bool(new_entry["command"])
+    has_sub_hooks = isinstance(new_entry.get("hooks"), list) and len(new_entry["hooks"]) > 0
+    if not has_top_cmd and not has_sub_hooks:
+        return None, True
+    return new_entry, True
 
 
 def _resolve_mcp_container(data: dict[str, Any], host: str) -> tuple[dict[str, Any], list[str]]:
@@ -762,7 +769,8 @@ def apply_host_integration(
             owned_hook_commands: list[str] = []
 
             if host in ("omp", "opencode"):
-                write_target(hooks_target, bundle.hooks_config["content"], mode=0o644)
+                hooks_mode = stat.S_IMODE(hooks_target.stat().st_mode) if hooks_target.is_file() else 0o600
+                write_target(hooks_target, bundle.hooks_config["content"], mode=hooks_mode)
                 details.append(f"Wrote host extension to {hooks_target}")
             else:
                 if host in ("codex", "claude-code"):
@@ -792,7 +800,7 @@ def apply_host_integration(
                         hooks_dict[event_name] = cleaned
 
                     updated_hooks = json.dumps(parsed_hooks_json, indent=2, ensure_ascii=False) + "\n"
-                    hooks_mode = stat.S_IMODE(hooks_target.stat().st_mode) if hooks_target.is_file() else 0o644
+                    hooks_mode = stat.S_IMODE(hooks_target.stat().st_mode) if hooks_target.is_file() else 0o600
                     write_target(hooks_target, updated_hooks, mode=hooks_mode)
                     details.append(f"Merged owned hooks into {hooks_target}")
 
@@ -819,7 +827,7 @@ def apply_host_integration(
                         hooks_dict[event_name] = cleaned
 
                     updated_hooks = json.dumps(parsed_hooks_json, indent=2, ensure_ascii=False) + "\n"
-                    hooks_mode = stat.S_IMODE(hooks_target.stat().st_mode) if hooks_target.is_file() else 0o644
+                    hooks_mode = stat.S_IMODE(hooks_target.stat().st_mode) if hooks_target.is_file() else 0o600
                     write_target(hooks_target, updated_hooks, mode=hooks_mode)
                     details.append(f"Merged owned hooks into {hooks_target}")
 
@@ -835,7 +843,7 @@ def apply_host_integration(
                                             owned_hook_commands.append(item["command"])
 
                     updated_hooks = json.dumps(parsed_hooks_json, indent=2, ensure_ascii=False) + "\n"
-                    hooks_mode = stat.S_IMODE(hooks_target.stat().st_mode) if hooks_target.is_file() else 0o644
+                    hooks_mode = stat.S_IMODE(hooks_target.stat().st_mode) if hooks_target.is_file() else 0o600
                     write_target(hooks_target, updated_hooks, mode=hooks_mode)
                     details.append(f"Merged owned hook sections into {hooks_target}")
         if "skill" in selected:

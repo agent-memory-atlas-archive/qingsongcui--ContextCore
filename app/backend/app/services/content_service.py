@@ -1244,9 +1244,21 @@ def reconcile_long_term_memory(
                     status_code=409,
                     detail=f"Target content '{supersede_target_id}' is not active (status: {target['status']})",
                 )
-            if ambiguous:
+            if ambiguous or (
+                is_agent_write
+                and not is_user_correction
+                and eff_origin not in governance_guardrails.AUTHORITATIVE_ORIGINS
+                and (
+                    target["category"] in governance_guardrails.PROTECTED_CONFLICT_CATEGORIES
+                    or category in governance_guardrails.PROTECTED_CONFLICT_CATEGORIES
+                )
+            ):
                 conflict_target_id = target["id"]
-                conflict_reason = f"Ambiguous supersession proposed against '{target['title']}'"
+                conflict_reason = (
+                    f"Ambiguous supersession proposed against '{target['title']}'"
+                    if ambiguous
+                    else f"Agent-proposed replacement of protected {target['category']} '{target['title']}' requires confirmation"
+                )
         else:
             candidates = read_conn.execute(
                 """

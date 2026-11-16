@@ -46,15 +46,25 @@ def test_lifecycle_refuses_existing_output_without_touching_data(tmp_path):
     assert marker.read_bytes() == b'UNCHANGED_SYNTHETIC_DATABASE'
 
 
-@pytest.mark.parametrize('fault', ['contract', 'frontend'])
+@pytest.mark.parametrize('fault', ['contract', 'frontend', 'backend', 'backend_bytecode'])
 def test_frozen_candidate_preflight_rejects_damage_without_database_access(tmp_path, monkeypatch, fault):
+    import hashlib
+    import importlib.util
     from app.frontend_release import _digest_tree
     entry = load('frozen_candidate_preflight', APP/'macos/backend_entry.py')
     frontend = tmp_path/'frontend'
     frontend.mkdir()
     (frontend/'index.html').write_text('synthetic frontend')
-    manifest = {'release_id': 'synthetic-candidate', 'api_contract': 2,
-                'frontend_sha256': _digest_tree(frontend)}
+    backend_tree = tmp_path/'app'
+    backend_tree.mkdir()
+    (backend_tree/'main.py').write_text('synthetic backend\n')
+    manifest = {
+        'release_id': 'synthetic-candidate',
+        'api_contract': 2,
+        'frontend_sha256': _digest_tree(frontend),
+        'backend_sha256': hashlib.sha256(b'synthetic-backend-release').hexdigest(),
+        'backend_runtime_sha256': entry.compute_backend_runtime_sha256(tmp_path),
+    }
     (tmp_path/'desktop-release.json').write_text(json.dumps(manifest))
     monkeypatch.setattr(sys, '_MEIPASS', str(tmp_path), raising=False)
     monkeypatch.setattr(sys, 'argv', ['senrelay-service', '-m', 'app.cli', 'check-install'])
@@ -63,8 +73,27 @@ def test_frozen_candidate_preflight_rejects_damage_without_database_access(tmp_p
         if fault == 'contract':
             manifest['api_contract'] = 999
             (tmp_path/'desktop-release.json').write_text(json.dumps(manifest))
-        else:
+        elif fault == 'frontend':
             (frontend/'index.html').write_text('corrupted')
+        elif fault == 'backend':
+            (backend_tree/'main.py').write_text('tampered backend python\n')
+        else:
+            real_find_spec = importlib.util.find_spec
+            tampered_code = compile('TAMPERED = True\n', 'app/runtime.py', 'exec')
+
+            class _TamperedLoader:
+                def get_code(self, _name):
+                    return tampered_code
+
+            class _TamperedSpec:
+                loader = _TamperedLoader()
+
+            def _fake_find_spec(name, *args, **kwargs):
+                if name == 'app.runtime':
+                    return _TamperedSpec()
+                return real_find_spec(name, *args, **kwargs)
+
+            monkeypatch.setattr(importlib.util, 'find_spec', _fake_find_spec)
         with pytest.raises(ValueError):
             entry.main()
     assert not (tmp_path/'contextcore.db').exists()

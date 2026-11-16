@@ -84,6 +84,20 @@ manifest = {key: record[key] for key in ('release_id', 'api_contract', 'frontend
 (build / 'desktop-release.json').write_text(json.dumps(manifest, indent=2))
 (build / 'build-inputs.json').write_text(json.dumps({'backend': str(backend), 'frontend': str(frontend)}))
 run(python, '-m', 'PyInstaller', '--noconfirm', '--clean', '--distpath', build / 'frozen', '--workpath', build / 'pyinstaller', here / 'backend.spec', env=os.environ | {'MACOSX_DEPLOYMENT_TARGET': minimum_macos})
+import subprocess
+frozen_service = build / 'frozen/senrelay-service'
+runtime_sha = subprocess.check_output(
+    [str(frozen_service / 'senrelay-service'), '-m', 'app.cli', 'print-backend-runtime-sha256'],
+    text=True,
+).strip()
+if len(runtime_sha) != 64:
+    raise RuntimeError(f'Unexpected backend_runtime_sha256 output: {runtime_sha!r}')
+manifest['backend_runtime_sha256'] = runtime_sha
+manifest_json = json.dumps(manifest, indent=2)
+(build / 'desktop-release.json').write_text(manifest_json)
+for target_manifest in (frozen_service / '_internal/desktop-release.json', frozen_service / 'desktop-release.json'):
+    if target_manifest.parent.is_dir() and (target_manifest.exists() or target_manifest.parent.name == '_internal'):
+        target_manifest.write_text(manifest_json)
 bundle = output / 'Senrelay.app'
 if bundle.exists(): shutil.rmtree(bundle)
 contents = bundle / 'Contents'

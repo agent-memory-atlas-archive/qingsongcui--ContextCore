@@ -203,6 +203,27 @@ def verify_static_discovery_subprocess(backend_dir: Path, app_root: Path) -> Non
         log("  --no-static correctly keeps API active while bypassing static mount.")
 
 
+def verify_wheel_members_match_source(zf: zipfile.ZipFile, backend_dir: Path, required_assets: list[str] | tuple[str, ...]) -> None:
+    """Ensure every required packaged asset and backend source file matches exact wheel path and bytes."""
+    from app.release_resources import source_files
+
+    namelist = set(zf.namelist())
+    expected_paths: list[str] = list(required_assets)
+    for source_path in source_files(backend_dir):
+        rel = source_path.relative_to(backend_dir).as_posix()
+        if rel not in expected_paths:
+            expected_paths.append(rel)
+
+    for rel in expected_paths:
+        if rel not in namelist:
+            raise AssertionError(f"Wheel archive missing exact packaged asset/source path: {rel}")
+        disk_path = backend_dir / rel
+        if not disk_path.is_file():
+            raise AssertionError(f"Expected source file missing on disk: {disk_path}")
+        if zf.read(rel) != disk_path.read_bytes():
+            raise AssertionError(f"Wheel member bytes differ from source file: {rel}")
+
+
 def verify_wheel_build_and_contents(backend_dir: Path) -> None:
     log("Verifying wheel package contents and execution...")
     with tempfile.TemporaryDirectory(prefix="cc-wheel-check-") as tmp:
@@ -234,9 +255,7 @@ def verify_wheel_build_and_contents(backend_dir: Path) -> None:
                 "app/services/semantic-runtime-wheels.json",
                 "app/services/semantic-runtime-requirements.txt",
             ]
-            for asset in required_assets:
-                if not any(name.endswith(asset) for name in namelist):
-                    raise AssertionError(f"Wheel archive missing required packaged asset: {asset}")
+            verify_wheel_members_match_source(zf, backend_dir, required_assets)
             metadata_files = [name for name in namelist if name.endswith(".dist-info/METADATA")]
             if len(metadata_files) != 1:
                 raise AssertionError("Wheel must contain exactly one package metadata record")

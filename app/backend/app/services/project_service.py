@@ -285,6 +285,42 @@ def get_project(project_id: str) -> dict[str, Any]:
         return p
 
 
+def _insert_project_conn(
+    conn,
+    *,
+    name: str,
+    description: str = "",
+    directories: list[str] | None = None,
+    activity_at: str | None = None,
+    manual: bool = False,
+) -> str:
+    clean_name = name.strip()
+    if not clean_name:
+        raise HTTPException(status_code=422, detail="Project name cannot be empty")
+    pid = new_id("proj")
+    now = now_iso()
+    effective_ts = _normalize_iso_utc(activity_at) or now
+    created_ts = effective_ts if _ts_epoch_ms(effective_ts) < _ts_epoch_ms(now) else now
+    conn.execute(
+        """
+        INSERT INTO projects (id, name, description, status, created_at, updated_at)
+        VALUES (?, ?, ?, 'active', ?, ?)
+        """,
+        (pid, clean_name, description.strip(), created_ts, effective_ts),
+    )
+    if directories:
+        for d in directories:
+            norm_d = os.path.abspath(d.strip())
+            conn.execute(
+                "INSERT OR IGNORE INTO project_directories (id, project_id, path, created_at) VALUES (?, ?, ?, ?)",
+                (new_id("pdir"), pid, norm_d, now),
+            )
+    log_audit(actor="user", action="project.create", target=pid, conn=conn)
+    if manual:
+        log_audit(actor="user", action="project.create_manual", target=pid, conn=conn)
+    return pid
+
+
 def create_project(
     name: str,
     description: str = "",
@@ -293,31 +329,15 @@ def create_project(
     activity_at: str | None = None,
     manual: bool = False,
 ) -> dict[str, Any]:
-    clean_name = name.strip()
-    if not clean_name:
-        raise HTTPException(status_code=422, detail="Project name cannot be empty")
-    pid = new_id("proj")
-    now = now_iso()
-    effective_ts = _normalize_iso_utc(activity_at) or now
-    created_ts = effective_ts if _ts_epoch_ms(effective_ts) < _ts_epoch_ms(now) else now
     with db() as conn:
-        conn.execute(
-            """
-            INSERT INTO projects (id, name, description, status, created_at, updated_at)
-            VALUES (?, ?, ?, 'active', ?, ?)
-            """,
-            (pid, clean_name, description.strip(), created_ts, effective_ts),
+        pid = _insert_project_conn(
+            conn,
+            name=name,
+            description=description,
+            directories=directories,
+            activity_at=activity_at,
+            manual=manual,
         )
-        if directories:
-            for d in directories:
-                norm_d = os.path.abspath(d.strip())
-                conn.execute(
-                    "INSERT OR IGNORE INTO project_directories (id, project_id, path, created_at) VALUES (?, ?, ?, ?)",
-                    (new_id("pdir"), pid, norm_d, now),
-                )
-        log_audit(actor="user", action="project.create", target=pid, conn=conn)
-        if manual:
-            log_audit(actor="user", action="project.create_manual", target=pid, conn=conn)
     return get_project(pid)
 
 
@@ -582,6 +602,48 @@ def split_project(
                     "UPDATE working_tasks SET project_id = ?, updated_at = ? WHERE project_id = ? AND legacy_content_id = ?",
                     (new_pid, now, project_id, cnt_id),
                 )
+        conn.execute(
+            """
+            UPDATE conflicts
+            SET project_id = ?
+            WHERE project_id = ?
+              AND EXISTS (
+                  SELECT 1 FROM contents ct
+                  WHERE ct.id = conflicts.existing_id AND ct.project_id = ?
+              )
+            """,
+            (new_pid, project_id, new_pid),
+        )
+        for hf in conn.execute(
+            "SELECT id, source_ids, card FROM handoffs WHERE project_id = ?",
+            (project_id,),
+        ).fetchall():
+            referenced_pids: set[str] = set()
+            for sid in decode(hf["source_ids"], []):
+                if not isinstance(sid, str) or not sid:
+                    continue
+                ct_row = conn.execute("SELECT project_id FROM contents WHERE id = ?", (sid,)).fetchone()
+                if ct_row and ct_row["project_id"]:
+                    referenced_pids.add(ct_row["project_id"])
+                cv_row = conn.execute("SELECT project_id FROM conversations WHERE id = ?", (sid,)).fetchone()
+                if cv_row and cv_row["project_id"]:
+                    referenced_pids.add(cv_row["project_id"])
+                wt_row = conn.execute(
+                    "SELECT project_id FROM working_tasks WHERE id = ? OR legacy_content_id = ?",
+                    (sid, sid),
+                ).fetchone()
+                if wt_row and wt_row["project_id"]:
+                    referenced_pids.add(wt_row["project_id"])
+            move_handoff = new_pid in referenced_pids and project_id not in referenced_pids
+            if not referenced_pids:
+                card_obj = decode(hf["card"], {})
+                card_wd = card_obj.get("working_directory") if isinstance(card_obj, dict) else None
+                if isinstance(card_wd, str) and card_wd and not is_broad_or_ephemeral_project_path(card_wd):
+                    matched_id, amb = _resolve_project_id_by_path_conn(conn, card_wd)
+                    if matched_id == new_pid and not amb:
+                        move_handoff = True
+            if move_handoff:
+                conn.execute("UPDATE handoffs SET project_id = ? WHERE id = ?", (new_pid, hf["id"]))
         conn.execute("UPDATE projects SET updated_at=? WHERE id=?", (now, project_id))
         log_audit(actor="user", action="project.split", target=new_pid, conn=conn)
     return get_project(new_pid)
@@ -968,61 +1030,64 @@ def reconstruct_or_resolve_project(
         norm_cwd = os.path.abspath(str(cwd).strip())
         if is_broad_or_ephemeral_project_path(norm_cwd):
             return None
-        matched, is_ambiguous = resolve_project_by_path(norm_cwd)
-        if matched and not is_ambiguous:
-            return matched["id"]
-        if is_ambiguous:
-            return None
-
         repo = repository_identity(norm_cwd)
-        if repo:
-            common = repo["common_root"]
-            if not is_broad_or_ephemeral_project_path(common):
-                matched, ambiguous = resolve_project_by_path(common)
-                if ambiguous:
-                    return None
-                if matched:
-                    with db() as conn:
+        proj_name = (metadata.get("name") or metadata.get("title") or "").strip() if metadata else ""
+        explicit_desc = (metadata.get("description") or "").strip() if metadata else ""
+
+        with db() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            matched_id, is_ambiguous = _resolve_project_id_by_path_conn(conn, norm_cwd)
+            if matched_id and not is_ambiguous:
+                return matched_id
+            if is_ambiguous:
+                return None
+
+            if repo:
+                common = repo["common_root"]
+                if not is_broad_or_ephemeral_project_path(common):
+                    common_id, common_amb = _resolve_project_id_by_path_conn(conn, common)
+                    if common_amb:
+                        return None
+                    if common_id:
                         conn.execute(
                             "INSERT OR IGNORE INTO project_directories(id,project_id,path,created_at) VALUES(?,?,?,?)",
-                            (new_id("dir"), matched["id"], repo["root"], now_iso()),
+                            (new_id("pdir"), common_id, repo["root"], now_iso()),
                         )
-                        touch_project_activity(conn, matched["id"], activity_at)
-                    return matched["id"]
-                norm_cwd = common
+                        touch_project_activity(conn, common_id, activity_at)
+                        return common_id
+                    norm_cwd = common
 
-        # Reconstruct new project based on actual cwd/project metadata
-        proj_name = (metadata.get("name") or metadata.get("title") or "").strip() if metadata else ""
-        if not proj_name:
-            basename = os.path.basename(norm_cwd)
-            proj_name = basename if basename else norm_cwd
-
-        desc = (metadata.get("description") or f"自动从工作目录还原: {norm_cwd}") if metadata else f"自动从工作目录还原: {norm_cwd}"
-        new_proj = create_project(
-            name=proj_name,
-            description=desc,
-            directories=[norm_cwd],
-            activity_at=activity_at,
-        )
-        return new_proj["id"]
+            if not proj_name:
+                basename = os.path.basename(norm_cwd)
+                proj_name = basename if basename else norm_cwd
+            desc = explicit_desc or f"自动从工作目录还原: {norm_cwd}"
+            return _insert_project_conn(
+                conn,
+                name=proj_name,
+                description=desc,
+                directories=[norm_cwd],
+                activity_at=activity_at,
+            )
 
     if metadata and metadata.get("name"):
         proj_name = metadata["name"].strip()
         if not proj_name:
             return None
         with db() as conn:
+            conn.execute("BEGIN IMMEDIATE")
             matches = conn.execute(
                 "SELECT id FROM projects WHERE name = ? AND status = 'active'", (proj_name,),
             ).fetchall()
-        if len(matches) == 1:
-            return matches[0]["id"]
-        if len(matches) > 1:
-            return None
-        return create_project(
-            name=proj_name,
-            description=metadata.get("description", ""),
-            activity_at=activity_at,
-        )["id"]
+            if len(matches) == 1:
+                return matches[0]["id"]
+            if len(matches) > 1:
+                return None
+            return _insert_project_conn(
+                conn,
+                name=proj_name,
+                description=metadata.get("description", ""),
+                activity_at=activity_at,
+            )
 
     return None
 
@@ -1082,6 +1147,7 @@ def repair_misclassified_projects() -> dict[str, Any]:
 
     # 2. Identify active projects whose directories (or auto-reconstructed origin path) are exclusively broad/ephemeral blackholes
     blackhole_ids: list[str] = []
+    blackhole_origins: dict[str, str] = {}
     auto_prefix = "自动从工作目录还原:"
     with db() as conn:
         curated_ids = {
@@ -1107,10 +1173,16 @@ def repair_misclassified_projects() -> dict[str, Any]:
             origin_path = desc[len(auto_prefix) :].strip() if desc.startswith(auto_prefix) else ""
             if dirs and all(is_broad_or_ephemeral_project_path(d) for d in dirs):
                 blackhole_ids.append(proj["id"])
+                blackhole_origins[proj["id"]] = dirs[0]
             elif not dirs and origin_path and is_broad_or_ephemeral_project_path(origin_path):
                 blackhole_ids.append(proj["id"])
-        # Detach broad/ephemeral directory bindings immediately so reconstruction resolves cleanly
+        # Stamp origin description before detaching directories so interrupted runs still recognize blackhole projects.
         for bh_id in blackhole_ids:
+            if bh_id in blackhole_origins:
+                conn.execute(
+                    "UPDATE projects SET description = ? WHERE id = ? AND (description IS NULL OR trim(description) = '')",
+                    (f"{auto_prefix}{os.path.abspath(blackhole_origins[bh_id])}", bh_id),
+                )
             conn.execute("DELETE FROM project_directories WHERE project_id = ?", (bh_id,))
     # 3. Collect conversations trapped in blackhole projects OR unassigned with a real cwd
     with db() as conn:

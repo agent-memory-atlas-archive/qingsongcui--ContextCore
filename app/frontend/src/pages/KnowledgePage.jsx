@@ -1153,7 +1153,7 @@ export function KnowledgePage({
   // Keep main content index as the first resource hook for stable path expectations.
   const resource = useResource(path, revision);
   const handbookPath = viewMode === 'handbook' && !selectedId
-    ? `/api/content/handbook${queryString({ project_id: scopeMode === 'project' ? projectId : '', include_global: 'true' })}`
+    ? `/api/content/handbook${queryString({ project_id: projectId || '', include_global: 'true' })}`
     : null;
   const handbookResource = useResource(handbookPath, revision);
   const workingTasksSummaryPath = kind === 'memory' && !selectedId
@@ -1580,7 +1580,9 @@ export function KnowledgePage({
                 <div>
                   <h3><BookOpen size={16} /> {t('实时生成的 AGENTS.md / CLAUDE.md 规则手册')}</h3>
                   <p className="muted">
-                    {t('自动汇总当前项目的常驻核心规则、全局使用习惯、架构约束与踩坑纪律，可直接粘贴至项目根目录。')}
+                    {projectId
+                      ? t('自动汇总当前项目的常驻核心规则、全局使用习惯、架构约束与踩坑纪律，可直接粘贴至项目根目录。')
+                      : t('自动汇总全局常驻核心规则与使用习惯，可直接粘贴至 AGENTS.md 或 CLAUDE.md。')}
                   </p>
                 </div>
                 <Button variant="primary" icon={copiedHandbook ? Check : Copy} onClick={copyHandbook}>

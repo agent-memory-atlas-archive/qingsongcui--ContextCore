@@ -14,6 +14,9 @@ from .claude_code import normalize_claude_code_hook
 from .opencode import normalize_opencode_hook
 
 
+from .host_attribution import detect_foreign_hook_host, raise_if_foreign_hook_host
+
+
 def parse_hook(
     host: str,
     payload: dict[str, Any],
@@ -25,6 +28,7 @@ def parse_hook(
     Does not infer missing raw dialogue. Preserves concrete fields and notes known limitations.
     """
     host_lower = host.lower()
+    raise_if_foreign_hook_host(host_lower, payload, env=env)
 
     if host_lower == "codex":
         return [normalize_codex_hook(payload)]

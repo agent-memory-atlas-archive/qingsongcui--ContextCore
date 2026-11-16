@@ -15,7 +15,7 @@ export function useResource(path, revision = 0) {
       if (sequence.current === current) setState({ path, data, loading: false, error: null });
     }).catch(error => {
       if (error.name !== 'AbortError' && sequence.current === current) {
-        setState(previous => ({ path, data: previous.path === path ? previous.data : null, loading: false, error }));
+        setState({ path, data: null, loading: false, error });
       }
     });
     return () => controller.abort();

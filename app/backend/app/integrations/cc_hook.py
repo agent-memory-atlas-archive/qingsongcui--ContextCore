@@ -108,6 +108,166 @@ def get_token_securely(agent_id: str) -> str | None:
         return None
 
 
+import re
+from pathlib import Path
+from typing import Any, Mapping
+
+_CURSOR_HOOK_ENV_KEYS = (
+    "CURSOR_VERSION",
+    "CURSOR_PROJECT_DIR",
+    "CURSOR_TRANSCRIPT_PATH",
+    "CURSOR_USER_EMAIL",
+    "CURSOR_CODE_REMOTE",
+)
+_GROK_HOOK_ENV_KEYS = (
+    "GROK_HOOK_EVENT",
+    "GROK_HOOK_NAME",
+    "GROK_SESSION_ID",
+    "GROK_WORKSPACE_ROOT",
+)
+_CURSOR_CAMEL_HOOK_EVENTS = frozenset({
+    "beforeSubmitPrompt",
+    "sessionStart",
+    "sessionEnd",
+    "afterAgentResponse",
+    "afterAgentThought",
+    "beforeShellExecution",
+    "afterShellExecution",
+    "beforeMCPExecution",
+    "afterMCPExecution",
+    "beforeReadFile",
+    "afterFileEdit",
+    "beforeTabFileRead",
+    "afterTabFileEdit",
+    "preCompact",
+    "preToolUse",
+    "postToolUse",
+    "postToolUseFailure",
+    "subagentStart",
+    "subagentStop",
+})
+
+
+def _path_segments(path_str: str) -> tuple[tuple[str, ...], ...]:
+    raw = str(path_str or "").strip()
+    if not raw:
+        return ()
+    expanded = os.path.expanduser(raw)
+    candidates = [raw, expanded]
+    try:
+        candidates.append(os.path.realpath(expanded))
+    except OSError:
+        pass
+    seen: list[tuple[str, ...]] = []
+    for cand in candidates:
+        parts = tuple(seg.lower() for seg in re.split(r"[\\/]+", cand) if seg)
+        if parts and parts not in seen:
+            seen.append(parts)
+    return tuple(seen)
+
+
+def _has_adjacent_segments(parts: tuple[str, ...], seq: tuple[str, ...]) -> bool:
+    n = len(seq)
+    if n == 0 or len(parts) < n:
+        return False
+    return any(parts[i:i + n] == seq for i in range(len(parts) - n + 1))
+
+
+def _infer_host_from_transcript_path(
+    path_str: str,
+    env: Mapping[str, str] | None = None,
+) -> str | None:
+    """Infer owning host from verified Claude root or exact path segments (never bare '.claude')."""
+    if _is_claude_code_transcript_path(path_str, env=env):
+        return "claude-code"
+    for parts in _path_segments(path_str):
+        if (
+            ".cursor" in parts
+            or "agent-transcripts" in parts
+            or _has_adjacent_segments(parts, ("application support", "cursor"))
+            or _has_adjacent_segments(parts, ("cursor", "user"))
+        ):
+            return "cursor"
+        if ".grok" in parts:
+            return "grok-build"
+        if ".codex" in parts or _has_adjacent_segments(parts, ("application support", "codex")):
+            return "codex"
+        if ".omp" in parts:
+            return "omp"
+        if (
+            _has_adjacent_segments(parts, (".local", "share", "opencode"))
+            or _has_adjacent_segments(parts, (".config", "opencode"))
+            or parts[-1] == "opencode.db"
+        ):
+            return "opencode"
+        if ".gemini" in parts and any(seg in {"antigravity", "antigravity-cli", "antigravity-ide"} for seg in parts):
+            return "antigravity"
+    return None
+
+
+def _is_claude_code_transcript_path(path_str: str, env: Mapping[str, str] | None = None) -> bool:
+    """Verify a Claude Code transcript path resolves to a .jsonl file inside CLAUDE_CONFIG_DIR or ~/.claude."""
+    raw = str(path_str or "").strip()
+    if not raw:
+        return False
+    env_map = os.environ if env is None else env
+    cfg_dir = str(env_map.get("CLAUDE_CONFIG_DIR") or "").strip()
+    root_candidate = Path(os.path.expanduser(cfg_dir)) if cfg_dir else (Path.home() / ".claude")
+    try:
+        root_real = Path(os.path.realpath(str(root_candidate)))
+        target_real = Path(os.path.realpath(os.path.expanduser(raw)))
+        target_real.relative_to(root_real)
+    except (OSError, ValueError):
+        return False
+    return target_real.suffix.lower() == ".jsonl"
+
+
+def detect_foreign_hook_host(
+    declared_host: str,
+    payload: Any,
+    env: Mapping[str, str] | None = None,
+) -> str | None:
+    """Return a non-empty reason/host tag if env, payload, or path contradicts declared_host."""
+    host_lower = str(declared_host or "").strip().lower()
+    env_map = os.environ if env is None else env
+
+    if host_lower != "cursor" and any(str(env_map.get(k) or "").strip() for k in _CURSOR_HOOK_ENV_KEYS):
+        return "cursor"
+    if host_lower != "grok-build" and any(str(env_map.get(k) or "").strip() for k in _GROK_HOOK_ENV_KEYS):
+        return "grok-build"
+
+    payload_map = payload if isinstance(payload, Mapping) else {}
+    if host_lower != "cursor":
+        if str(payload_map.get("cursor_version") or "").strip():
+            return "cursor"
+        if host_lower == "claude-code":
+            hook_event_name = str(payload_map.get("hook_event_name") or "").strip()
+            if str(payload_map.get("generation_id") or "").strip() or hook_event_name in _CURSOR_CAMEL_HOOK_EVENTS:
+                return "cursor"
+
+    path_candidates = [
+        payload_map.get("transcript_path"),
+        payload_map.get("transcriptPath"),
+        payload_map.get("artifactDirectoryPath"),
+    ]
+    if host_lower != "cursor":
+        path_candidates.append(env_map.get("CURSOR_TRANSCRIPT_PATH"))
+    for cand in path_candidates:
+        cand_str = str(cand or "").strip()
+        if not cand_str:
+            continue
+        inferred = _infer_host_from_transcript_path(cand_str, env=env_map)
+        if inferred is not None and inferred != host_lower:
+            return inferred
+
+    if host_lower == "claude-code":
+        transcript_str = str(payload_map.get("transcript_path") or payload_map.get("transcriptPath") or "").strip()
+        if transcript_str and not _is_claude_code_transcript_path(transcript_str, env=env_map):
+            return "outside-claude-root"
+
+    return None
+
+
 def post_to_contextcore(
     agent_id: str,
     event_arg: str,
@@ -124,6 +284,8 @@ def post_to_contextcore(
     last_assistant_message, text, tool_name, etc. directly at top-level.
     """
     if agent_id not in {"codex", "omp", "cursor", "antigravity", "claude-code", "opencode"} or not _loopback_url(base_url):
+        return None
+    if isinstance(raw_payload, dict) and detect_foreign_hook_host(agent_id, raw_payload):
         return None
     canonical_event = EVENT_NAME_MAP.get(event_arg, event_arg)
     url = f"{base_url.rstrip('/')}/api/connections/{agent_id}/hook"
@@ -363,6 +525,8 @@ def enqueue_notification(agent_id, event_arg, payload, base_url='http://127.0.0.
     import time
     if agent_id not in HOSTS or not _loopback_url(base_url) or not isinstance(payload, dict):
         return False
+    if detect_foreign_hook_host(agent_id, payload):
+        return False
     try:
         token = get_token_securely(agent_id)
         if not token:
@@ -523,15 +687,16 @@ def drain_notifications(base_url='http://127.0.0.1:8420'):
                     _safe_unlink(entry)
                 continue
 
-            post_to_contextcore(
-                host,
-                item.get('event', ''),
-                {**item['payload'], 'context_request': False},
-                base_url=base_url,
-                timeout=2.0,
-                read_response=False,
-                preserve_missing_cwd=True,
-            )
+            if not detect_foreign_hook_host(host, item.get('payload')):
+                post_to_contextcore(
+                    host,
+                    item.get('event', ''),
+                    {**item['payload'], 'context_request': False},
+                    base_url=base_url,
+                    timeout=2.0,
+                    read_response=False,
+                    preserve_missing_cwd=True,
+                )
             if is_legacy_slot:
                 slot_fd = _notification_slot(host)
                 try:
@@ -566,7 +731,8 @@ def main() -> int:
         except json.JSONDecodeError:
             payload = {"raw": raw_input}
 
-    enqueue_notification(agent_id, event_arg, payload, base_url=base_url)
+    if not detect_foreign_hook_host(agent_id, payload, env=os.environ):
+        enqueue_notification(agent_id, event_arg, payload, base_url=base_url)
     output = format_host_response(agent_id, event_arg, None)
 
     sys.stdout.write(json.dumps(output))

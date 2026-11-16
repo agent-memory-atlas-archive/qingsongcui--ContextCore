@@ -73,7 +73,7 @@ def ensure_schema(conn=None):
           END""")
 
 
-def _time(value: str | None, default=None):
+def _time(value: str | None, default=None, *, field: str | None = None):
     if value is None:
         return default
     try:
@@ -82,14 +82,16 @@ def _time(value: str | None, default=None):
             raise ValueError()
         return parsed.astimezone(timezone.utc).isoformat()
     except (ValueError, TypeError):
-        raise HTTPException(422, "Timestamps must be ISO8601 with timezone")
+        prefix = f"{field}: " if field else ""
+        raise HTTPException(422, f"{prefix}Timestamps must be ISO8601 with timezone")
 
 
-def _integer(value):
+def _integer(value, *, field: str | None = None):
     if value is None:
         return None
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        raise HTTPException(422, "Token counts must be nonnegative integers or null")
+        prefix = f"{field}: " if field else ""
+        raise HTTPException(422, f"{prefix}Token counts must be nonnegative integers or null")
     return value
 
 
@@ -99,21 +101,25 @@ def normalize_usage(raw: dict | None, protocol="openai", input_includes_cache=No
     raw = raw or {}
     if not isinstance(raw, dict):
         raise HTTPException(422, "raw_usage must be an object")
-    def pick(*names):
-        return next((raw[n] for n in names if raw.get(n) is not None), None)
-    inp = _integer(pick("input_tokens", "prompt_tokens"))
-    out = _integer(pick("output_tokens", "completion_tokens"))
+    def pick_named(*names):
+        return next(((n, raw[n]) for n in names if raw.get(n) is not None), (names[0], None))
+    inp_name, inp_val = pick_named("input_tokens", "prompt_tokens")
+    inp = _integer(inp_val, field=inp_name)
+    out_name, out_val = pick_named("output_tokens", "completion_tokens")
+    out = _integer(out_val, field=out_name)
     details = raw.get("input_tokens_details") or raw.get("prompt_tokens_details") or {}
     out_details = raw.get("output_tokens_details") or raw.get("completion_tokens_details") or {}
     if not isinstance(details, dict) or not isinstance(out_details, dict):
         raise HTTPException(422, "Usage details must be objects")
-    read = _integer(pick("cache_read_tokens", "cache_read_input_tokens"))
+    read_name, read_val = pick_named("cache_read_tokens", "cache_read_input_tokens")
+    read = _integer(read_val, field=read_name)
     if read is None and details.get("cached_tokens") is not None:
-        read = _integer(details["cached_tokens"])
-    write = _integer(pick("cache_write_tokens", "cache_creation_input_tokens"))
-    reasoning = _integer(pick("reasoning_tokens"))
+        read = _integer(details["cached_tokens"], field="cached_tokens")
+    write_name, write_val = pick_named("cache_write_tokens", "cache_creation_input_tokens")
+    write = _integer(write_val, field=write_name)
+    reasoning = _integer(pick_named("reasoning_tokens")[1], field="reasoning_tokens")
     if reasoning is None and out_details.get("reasoning_tokens") is not None:
-        reasoning = _integer(out_details["reasoning_tokens"])
+        reasoning = _integer(out_details["reasoning_tokens"], field="reasoning_tokens")
     includes = protocol != "anthropic" if input_includes_cache is None else input_includes_cache
     # Unknown cache counters stay null in the response. For OpenAI absent details
     # mean cache treatment is unknown, not that a discounted token count is zero.
@@ -133,7 +139,7 @@ def normalize_usage(raw: dict | None, protocol="openai", input_includes_cache=No
                 input_includes_cache=includes, reasoning_included_in_output=True)
 
 
-def _decimal(value):
+def _decimal(value, *, field: str | None = None):
     if value is None:
         return None
     try:
@@ -142,7 +148,8 @@ def _decimal(value):
             raise ValueError()
         return format(result, "f")
     except (ValueError, InvalidOperation):
-        raise HTTPException(422, "Prices must be finite nonnegative decimal values")
+        prefix = f"{field}: " if field else ""
+        raise HTTPException(422, f"{prefix}Prices must be finite nonnegative decimal values")
 
 
 def add_price(data):
@@ -151,8 +158,8 @@ def add_price(data):
         raise HTTPException(422, "Unsupported price fields")
     if not data.get("provider_id") or not data.get("model") or any(not isinstance(data[k], str) or len(data[k]) > 256 for k in ("provider_id", "model")):
         raise HTTPException(422, "Provider and billing model are required")
-    start = _time(data.get("effective_from"), now_iso())
-    end = _time(data.get("effective_to"))
+    start = _time(data.get("effective_from"), now_iso(), field="effective_from")
+    end = _time(data.get("effective_to"), field="effective_to")
     if end and end <= start:
         raise HTTPException(422, "Price end must follow start")
     currency = str(data.get("currency", "USD")).upper()
@@ -161,7 +168,7 @@ def add_price(data):
     result = {"id": new_id("price"), "provider_id": data["provider_id"], "model": data["model"],
               "effective_from": start, "effective_to": end, "currency": currency}
     for key in ("input_per_million", "output_per_million", "cache_read_per_million", "cache_write_per_million"):
-        result[key] = _decimal(data.get(key))
+        result[key] = _decimal(data.get(key), field=key)
     with db() as conn:
         ensure_schema(conn)
         conn.execute("INSERT INTO usage_v2_prices VALUES (?,?,?,?,?,?,?)", (result["id"], result["provider_id"], result["model"], start, end, currency, encode(result)))
@@ -240,10 +247,10 @@ def _safe_observation(item):
     if not item.get("started_at"):
         raise HTTPException(422, "A stable started_at timestamp is required for replay-safe ingestion")
     result = {k: v for k, v in item.items() if k in allowed}
-    result.update(origin=origin, status=status, started_at=_time(item["started_at"]))
+    result.update(origin=origin, status=status, started_at=_time(item["started_at"], field="started_at"))
     for key in ("ended_at", "first_content_at", "last_content_at"):
-        result[key] = _time(item.get(key))
-    result["content_chunks"] = _integer(item.get("content_chunks"))
+        result[key] = _time(item.get(key), field=key)
+    result["content_chunks"] = _integer(item.get("content_chunks"), field="content_chunks")
     # Retain only documented numeric usage semantics, never arbitrary raw JSON.
     result["usage"] = normalize_usage(item.get("raw_usage"), item.get("protocol", "openai"), item.get("input_includes_cache"))
     result.pop("raw_usage", None)

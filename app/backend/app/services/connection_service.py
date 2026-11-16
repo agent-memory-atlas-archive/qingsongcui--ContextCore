@@ -14,27 +14,33 @@ from app.database import db, now_iso, row_to_dict, log_audit, encode, get_app_se
 from app.integrations.constants import DEFAULT_BASE_URL
 
 
+def _sanitize_loopback_base_url(raw_url: str | None) -> str | None:
+    if not raw_url:
+        return None
+    try:
+        parsed = urlsplit(str(raw_url).strip())
+        if parsed.scheme in ("http", "https") and parsed.hostname:
+            hostname = parsed.hostname.lower()
+            is_loopback = hostname in ("localhost", "127.0.0.1", "::1", "0.0.0.0")
+            if not is_loopback:
+                try:
+                    is_loopback = ipaddress.ip_address(hostname).is_loopback
+                except ValueError:
+                    is_loopback = False
+            if is_loopback:
+                netloc_host = f"[{hostname}]" if ":" in hostname else hostname
+                clean_port = f":{parsed.port}" if parsed.port else ""
+                return f"{parsed.scheme}://{netloc_host}{clean_port}"
+    except Exception:
+        return None
+    return None
+
+
 def resolve_trusted_base_url(base_url: str | None = None) -> str:
     """Resolve trusted service base URL, reusing request/runtime metadata while rejecting unauthenticated remote origins."""
-    if base_url:
-        try:
-            parsed = urlsplit(base_url.strip())
-            if parsed.scheme in ("http", "https") and parsed.hostname:
-                hostname = parsed.hostname.lower()
-                is_loopback = False
-                if hostname in ("localhost", "127.0.0.1", "::1", "0.0.0.0"):
-                    is_loopback = True
-                else:
-                    try:
-                        is_loopback = ipaddress.ip_address(hostname).is_loopback
-                    except ValueError:
-                        is_loopback = False
-                if is_loopback:
-                    clean_port = f":{parsed.port}" if parsed.port else ""
-                    return f"{parsed.scheme}://{hostname}{clean_port}"
-        except Exception:
-            pass
-        # Reject unauthenticated remote origins; fall through to local runtime metadata
+    cleaned_arg = _sanitize_loopback_base_url(base_url)
+    if cleaned_arg:
+        return cleaned_arg
 
     # Reuse existing runtime metadata
     try:
@@ -48,9 +54,9 @@ def resolve_trusted_base_url(base_url: str | None = None) -> str:
             return f"http://{host}:{port}"
     except Exception:
         pass
-    env_url = os.environ.get("CONTEXTCORE_BASE_URL")
-    if env_url:
-        return env_url.rstrip("/")
+    cleaned_env = _sanitize_loopback_base_url(os.environ.get("CONTEXTCORE_BASE_URL"))
+    if cleaned_env:
+        return cleaned_env
     return DEFAULT_BASE_URL
 
 

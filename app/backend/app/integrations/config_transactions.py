@@ -507,7 +507,9 @@ class ConfigurationTransactions:
                 changes.append({"owner": spec["owner"], "path": spec["path"], "status": status})
                 continue
             if operation == "uninstall":
-                if not owned and not spec.get("takeover_selected_field"):
+                if exists and not owned:
+                    raise ConfigurationError("Only Senrelay-owned entries may be uninstalled")
+                if not exists and not owned and not spec.get("takeover_selected_field"):
                     raise ConfigurationError("Only Senrelay-owned entries may be uninstalled")
                 if owned and owned["owner"] != spec["owner"]:
                     raise ConfigurationError("Only Senrelay-owned entries may be uninstalled")

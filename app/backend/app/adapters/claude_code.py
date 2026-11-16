@@ -406,10 +406,14 @@ def read_claude_code_sessions(roots: list[str], *, source_paths: list[str] | Non
     return sessions
 
 
+from .host_attribution import raise_if_foreign_hook_host
+
+
 def normalize_claude_code_hook(payload: dict[str, Any]) -> dict[str, Any]:
+    raise_if_foreign_hook_host("claude-code", payload)
     event = str(payload.get("event") or payload.get("hook_event_name") or "unknown")
     session_id = str(payload.get("session_id") or payload.get("sessionId") or "").strip()
-    transcript = str(payload.get("transcript_path") or "").strip()
+    transcript = str(payload.get("transcript_path") or payload.get("transcriptPath") or "").strip()
     if not session_id:
         raise AgentAdapterError(host="claude-code", code="unsupported_format", detail="Hook requires a stable session ID")
     stem = Path(transcript).stem if transcript else session_id

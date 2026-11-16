@@ -1483,7 +1483,15 @@ class ManagementService:
                     for spec in provider_specs:
                         spec.update(owner="activation:" + host_id, takeover_selected_field=True, activation_field=True)
                     if not provider.get("credential_ref"):
-                        provider_specs.append({"path": str(self.home / host["provider_path"]), "kind": "json", "pointer": ["env", "ANTHROPIC_AUTH_TOKEN"], "value": None, "owner": "activation:" + host_id, "operation": "uninstall", "takeover_selected_field": True, "activation_field": True})
+                        token_path = str(self.home / host["provider_path"])
+                        token_key = "json:" + canonical(["env", "ANTHROPIC_AUTH_TOKEN"])
+                        with self.connect() as conn:
+                            act_secret = conn.execute(
+                                "SELECT 1 FROM management_owned WHERE path=? AND item_key=? AND owner=?",
+                                (token_path, token_key, "activation:" + host_id),
+                            ).fetchone()
+                        if act_secret:
+                            provider_specs.append({"path": token_path, "kind": "json", "pointer": ["env", "ANTHROPIC_AUTH_TOKEN"], "value": None, "owner": "activation:" + host_id, "operation": "uninstall", "activation_field": True})
                     provider_specs.append({"path": str(self.home / host["provider_path"]), "kind": "json", "pointer": ["env", "ANTHROPIC_MODEL"], "value": native_model, "owner": "activation:" + host_id, "operation": "install", "takeover_selected_field": True, "activation_field": True})
                 elif host_id in ("codex", "codex-desktop"):
                     name = "senrelay_" + provider_id.replace("provider_", "")

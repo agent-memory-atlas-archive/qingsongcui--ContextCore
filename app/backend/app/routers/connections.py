@@ -230,6 +230,53 @@ def receive_hook_event_endpoint(
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"Failed to parse hook event: {str(e)}")
 
+    if connection_id == "claude-code":
+        from pathlib import Path
+        from app.adapters.base import AgentAdapterError, validate_path_str
+
+        claude_roots: list[str] = []
+        for raw_root in (conn_data.get("paths") or []):
+            raw_str = str(raw_root or "").strip()
+            if not raw_str:
+                continue
+            expanded_root = Path(raw_str).expanduser()
+            if expanded_root.name == ".claude":
+                claude_roots.append(str(expanded_root / "projects"))
+            claude_roots.append(str(expanded_root))
+
+        other_hosts = ("cursor", "codex", "omp", "opencode", "antigravity", "grok-build", "grok")
+        for record in normalized_records:
+            source_p = str(record.get("source_path") or "").strip()
+            if source_p:
+                if Path(source_p).suffix.lower() != ".jsonl":
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"Claude Code hook transcript must be a .jsonl file: {source_p}",
+                    )
+                if claude_roots:
+                    try:
+                        validate_path_str(str(Path(source_p).expanduser()), claude_roots)
+                    except AgentAdapterError as exc:
+                        raise HTTPException(
+                            status_code=422,
+                            detail=f"Claude Code hook transcript path is outside configured Claude roots: {exc}",
+                        )
+            else:
+                sid = str(record.get("session_id") or "").strip()
+                if sid:
+                    sibling_exts = tuple(f"{h}:{sid}" for h in other_hosts)
+                    placeholders = ",".join("?" for _ in sibling_exts)
+                    with db() as conn:
+                        sibling = conn.execute(
+                            f"SELECT agent FROM conversations WHERE external_id IN ({placeholders}) AND agent != 'claude-code' LIMIT 1",
+                            sibling_exts,
+                        ).fetchone()
+                    if sibling:
+                        raise HTTPException(
+                            status_code=422,
+                            detail=f"Session {sid} already belongs to {sibling[0]}, not claude-code",
+                        )
+
     processed_count = 0
 
     # Lifecycle payloads can report capture/checkpoints, never request context

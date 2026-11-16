@@ -8,6 +8,7 @@ from pathlib import Path
 import shlex
 import sys
 from typing import Any
+from urllib.parse import urlsplit
 from app.integrations.constants import (
     DEFAULT_BASE_URL,
     DEFAULT_MCP_ENDPOINT,
@@ -24,13 +25,28 @@ OPENCODE_PLUGIN_PATH = Path(__file__).parent / "opencode_plugin.ts"
 CC_HOOK_PATH = Path(__file__).parent / "cc_hook.py"
 
 
+def _strip_base_url_credentials(base_url: str | None) -> str:
+    """Strip any userinfo, query, or fragment before embedding base_url into host configs."""
+    raw = str(base_url or DEFAULT_BASE_URL).strip() or DEFAULT_BASE_URL
+    try:
+        parsed = urlsplit(raw)
+        if parsed.scheme in ("http", "https") and parsed.hostname:
+            hostname = parsed.hostname.lower()
+            netloc_host = f"[{hostname}]" if ":" in hostname else hostname
+            clean_port = f":{parsed.port}" if parsed.port else ""
+            return f"{parsed.scheme}://{netloc_host}{clean_port}"
+    except Exception:
+        pass
+    return raw.rstrip("/")
+
+
 def render_mcp_config(
     agent_id: HostId,
     base_url: str = DEFAULT_BASE_URL,
     token: str = "<agent-token>",
 ) -> dict[str, Any]:
     """Render the exact MCP configuration structure for the given host."""
-    clean_base = base_url.rstrip("/")
+    clean_base = _strip_base_url_credentials(base_url)
     mcp_url = f"{clean_base}{DEFAULT_MCP_ENDPOINT}"
     target_path = HOST_CONFIG_PATHS[agent_id]["mcp"]
 
@@ -176,7 +192,7 @@ def render_hooks_config(
 ) -> dict[str, Any]:
     """Render host-specific hooks configuration or extension code."""
     raw_runner = hook_runner_path or str(CC_HOOK_PATH.resolve())
-    clean_base = (base_url or DEFAULT_BASE_URL).rstrip("/")
+    clean_base = _strip_base_url_credentials(base_url)
     if getattr(sys, "frozen", False):
         runner = f"{shlex.quote(sys.executable)} --hook"
     elif raw_runner.endswith(".py"):
@@ -438,13 +454,14 @@ def render_setup_preview(
     hook_runner_path: str | None = None,
 ) -> dict[str, Any]:
     """Assemble a comprehensive preview of all configuration files for an agent."""
-    mcp = render_mcp_config(agent_id, base_url=base_url, token=token)
-    hooks = render_hooks_config(agent_id, hook_runner_path=hook_runner_path, base_url=base_url)
+    clean_base = _strip_base_url_credentials(base_url)
+    mcp = render_mcp_config(agent_id, base_url=clean_base, token=token)
+    hooks = render_hooks_config(agent_id, hook_runner_path=hook_runner_path, base_url=clean_base)
     skill = render_skill_or_command(agent_id)
 
     return {
         "agent_id": agent_id,
-        "base_url": base_url,
+        "base_url": clean_base,
         "mcp_config": mcp,
         "hooks_config": hooks,
         "skill_or_command": skill,

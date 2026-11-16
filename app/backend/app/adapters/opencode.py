@@ -474,10 +474,14 @@ def iter_opencode_sessions(roots: list[str], *, source_paths: list[str] | None =
 
     failures: list[dict[str, Any]] = []
     yielded = False
+    seen_external_ids: set[str] = set()
     for path in databases.values():
         try:
             validate_path(path, normalized)
             for session in _iter_database_sessions(path, normalized):
+                ext = str(session.get("external_id") or "")
+                if ext:
+                    seen_external_ids.add(ext)
                 yielded = True
                 yield session
         except PartialHistoryError as exc:
@@ -490,25 +494,8 @@ def iter_opencode_sessions(roots: list[str], *, source_paths: list[str] | None =
                 "retryable": bool(getattr(exc, "retryable", False)),
             })
 
-    if failures:
-        if yielded:
-            raise PartialHistoryError(host="opencode", code="partial_sync", failures=failures,
-                                      detail="Some databases could not be read")
-        first = failures[0]
-        retryable = all(bool(item.get("retryable", False)) for item in failures)
-        raise AgentAdapterError(
-            host="opencode",
-            code=first["code"],
-            path=first["path"],
-            detail=first["detail"],
-            retryable=retryable,
-        )
-    if databases:
-        return
-
-    # Legacy JSON storage is emitted one session at a time. A service-planned
-    # storage directory means the exact tree was snapshotted as one atomic source;
-    # direct callers may instead provide exact source files without another rglob.
+    # Legacy JSON storage is emitted one session at a time. Always inspect legacy
+    # roots even if opencode.db errored or yielded zero rows, deduplicating by external_id.
     legacy_roots: list[str] = list(explicit_legacy_dirs.values())
     directory_snapshot = bool(legacy_roots)
     if not legacy_roots:
@@ -523,19 +510,37 @@ def iter_opencode_sessions(roots: list[str], *, source_paths: list[str] | None =
     for storage in legacy_roots:
         legacy_found = True
         try:
-            yield from _iter_legacy_sessions(
+            for session in _iter_legacy_sessions(
                 storage, normalized,
                 source_paths=None if directory_snapshot else source_paths,
-            )
+            ):
+                ext = str(session.get("external_id") or "")
+                if ext and ext in seen_external_ids:
+                    continue
+                if ext:
+                    seen_external_ids.add(ext)
+                yielded = True
+                yield session
         except AgentAdapterError as exc:
             failures.append({"path": exc.path or str(storage), "code": exc.code, "detail": exc.detail})
     if failures:
-        if yielded or legacy_found:
-            raise PartialHistoryError(host="opencode", code="partial_sync", failures=failures,
-                                      detail="Some legacy session records could not be read")
+        if yielded:
+            raise PartialHistoryError(
+                host="opencode",
+                code="partial_sync",
+                failures=failures,
+                detail="Some OpenCode history sources could not be read",
+            )
         first = failures[0]
-        raise AgentAdapterError(host="opencode", code=first["code"], path=first["path"], detail=first["detail"])
-    if legacy_found:
+        retryable = all(bool(item.get("retryable", False)) for item in failures)
+        raise AgentAdapterError(
+            host="opencode",
+            code=first["code"],
+            path=first["path"],
+            detail=first["detail"],
+            retryable=retryable,
+        )
+    if databases or legacy_found:
         return
     raise AgentAdapterError(host="opencode", code="root_not_granted", detail="No readable opencode.db and no legacy storage tree")
 

@@ -861,33 +861,12 @@ def save_memory(
             "summary_note": f"💡 短期任务进展已记入当前工作任务：{clean_title}",
         }
 
-    effective_user_correction = bool(is_user_correction) or (
-        not ambiguous
-        and category == "preference"
-        and bool(
-            re.search(
-                r"(?:改为|改用|换成|切换为|不再使用|不再采用|switched?\s+to\s+.+\s+instead\s+of)",
-                clean_content,
-                re.IGNORECASE,
-            )
-        )
-    )
-
-    # Prevent unconfirmed agent calls from self-asserting authoritative origin to bypass admission filters
+    # MCP save_memory is an unverified agent tool call; never let caller flags
+    # or preference phrasing disable agent write guardrails or silently supersede.
     raw_origin = (origin_authority or "").strip().lower() or None
-    effective_origin = raw_origin
-    if not effective_user_correction and raw_origin in governance_guardrails.AUTHORITATIVE_ORIGINS:
-        precheck = governance_guardrails.classify_write_candidate(
-            title=clean_title,
-            content=clean_content,
-            category=category,
-            origin_authority=None,
-            is_agent_write=True,
-            actor=caller,
-            kind="memory",
-        )
-        if not precheck["allowed"]:
-            effective_origin = None
+    effective_origin = (
+        None if raw_origin in governance_guardrails.AUTHORITATIVE_ORIGINS else raw_origin
+    )
 
     reconciled = content_service.reconcile_long_term_memory(
         title=clean_title,
@@ -901,8 +880,8 @@ def save_memory(
         origin_authority=effective_origin,
         agent=caller,
         actor=caller,
-        is_agent_write=not effective_user_correction,
-        is_user_correction=effective_user_correction,
+        is_agent_write=True,
+        is_user_correction=False,
         supersedes_id=supersedes_id,
         ambiguous=ambiguous,
         cwd=cwd,

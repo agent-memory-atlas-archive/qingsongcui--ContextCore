@@ -744,6 +744,11 @@ def create_schema(db_path: Path | None = None) -> None:
                         (shared_key,),
                     )
             set_app_setting("shared_db_tombstones_migrated", True, conn=conn)
+        hooks_repaired = get_app_setting("misattributed_claude_code_hooks_repaired_v1", default=False, conn=conn)
+        if not hooks_repaired:
+            from app.services.conversation_service import repair_misattributed_claude_code_conversations
+            repair_misattributed_claude_code_conversations(conn=conn)
+            set_app_setting("misattributed_claude_code_hooks_repaired_v1", True, conn=conn)
         # 5. Initialize default connections from the single host registry
         from app.integrations.constants import HOST_LABELS, SUPPORTED_HOSTS
         default_connections = [(host_id, HOST_LABELS[host_id]) for host_id in SUPPORTED_HOSTS]

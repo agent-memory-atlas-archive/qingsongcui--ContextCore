@@ -1,5 +1,25 @@
 // Server diagnostics may contain host paths, account responses or credential values.
 // Keep them out of routine notices; retain only structured status for safe recovery.
+import { t } from './i18n.jsx';
+
+const SAFE_LOC_IGNORED = new Set(['body', 'query', 'path', 'header']);
+const SAFE_FIELD_RE = /^[a-zA-Z_][a-zA-Z0-9_]{0,63}$/;
+
+export function extractSafeValidationFields(detail) {
+  if (!Array.isArray(detail)) return [];
+  const fields = [];
+  for (const item of detail) {
+    if (!item || !Array.isArray(item.loc)) continue;
+    const namedSegments = item.loc.filter(
+      seg => typeof seg === 'string' && !SAFE_LOC_IGNORED.has(seg) && SAFE_FIELD_RE.test(seg)
+    );
+    const field = namedSegments[namedSegments.length - 1];
+    if (field && !fields.includes(field)) fields.push(field);
+    if (fields.length >= 5) break;
+  }
+  return fields;
+}
+
 export function errorFeedback(status, detail) {
   const text = typeof detail === 'string' ? detail : '';
   if (status === 507 && /^Insufficient disk space for the model download/i.test(text)) return '模型下载空间不足。请释放磁盘空间后重新确认下载，词法检索仍可使用。';
@@ -36,7 +56,17 @@ export function errorFeedback(status, detail) {
   if ([404, 410].includes(status)) return '这条内容或功能现在不可用了。请重新读取列表，已有草稿不会被自动覆盖。';
   if (status === 409) return '内容或设置已在别处变化。请重新读取并比较，再决定是否提交；你的草稿仍保留。';
   if (status === 401 || status === 403) return '这次操作尚未获得授权。请检查所选范围和权限，必要时刷新本机连接后重试。';
-  if (status === 422 || status === 400) return '有些内容不符合要求。请检查必填项、所选内容和输入格式后再试。';
+  if (status === 422 || status === 400) {
+    const tsField = /^([a-zA-Z_][a-zA-Z0-9_]{0,63}): Timestamps must be ISO8601 with timezone$/i.exec(text);
+    if (tsField) return t('时间戳必须带时区（字段：{field}）。', { field: tsField[1] });
+    const tokField = /^([a-zA-Z_][a-zA-Z0-9_]{0,63}): Token counts must be nonnegative integers or null$/i.exec(text);
+    if (tokField) return t('token 计数必须是非负整数（字段：{field}）。', { field: tokField[1] });
+    const priceField = /^([a-zA-Z_][a-zA-Z0-9_]{0,63}): Prices must be finite nonnegative decimal values$/i.exec(text);
+    if (priceField) return t('价格必须是非负有限小数（字段：{field}）。', { field: priceField[1] });
+    const fields = extractSafeValidationFields(detail);
+    if (fields.length) return t('有些内容不符合要求（字段：{fields}）。请检查必填项、所选内容和输入格式后再试。', { fields: fields.join(', ') });
+    return '有些内容不符合要求。请检查必填项、所选内容和输入格式后再试。';
+  }
   if (status === 429) return '请求过于频繁或额度暂不可用。请稍后重试，并检查对应助手的账号状态。';
   if (status >= 500) return '本机服务暂时未完成操作。请重新读取状态；确认结果前不要重复提交。';
   return '操作没有完成，请检查本机服务后重试。';

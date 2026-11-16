@@ -545,8 +545,13 @@ class MigrationService:
         now=datetime.now(timezone.utc).isoformat()
         with self.manager.connect() as conn:
             conn.execute('BEGIN IMMEDIATE')
-            existing=conn.execute('SELECT id FROM management_migrations WHERE identity_key=?',(identity,)).fetchone()
-            if existing: plan_id=existing['id']
+            existing=conn.execute('SELECT id,status FROM management_migrations WHERE identity_key=?',(identity,)).fetchone()
+            if existing:
+                plan_id=existing['id']
+                if existing['status']=='failed':
+                    conn.execute(
+                        "UPDATE management_migrations SET status='planned',source_hash=?,private_manifest=?,preview=?,receipt=NULL,updated_at=? WHERE id=?",
+                        (manifest['source']['sha256'],canonical(manifest),canonical(preview),now,plan_id))
             else:
                 plan_id='migration_'+uuid4().hex
                 conn.execute('INSERT INTO management_migrations VALUES(?,?,?,?,?,?,NULL,?,?)',

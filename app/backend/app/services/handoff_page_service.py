@@ -259,6 +259,7 @@ def _prepare_messages_for_model(
     messages: list[dict[str, Any]],
     *,
     start_index: int = 0,
+    incomplete_indices_out: set[int] | None = None,
 ) -> tuple[list[dict[str, Any]], str]:
     sliced = list(enumerate(messages))[start_index:]
     prepared: list[dict[str, Any]] = []
@@ -344,6 +345,11 @@ def _prepare_messages_for_model(
             notes.append("Shortened long turns " + ", ".join(str(i) for i in shortened_other[:15]))
         if dropped:
             notes.append("Omitted older turns " + ", ".join(str(i) for i in dropped[:15]))
+
+    if incomplete_indices_out is not None:
+        incomplete_indices_out.update(trimmed_assistant)
+        incomplete_indices_out.update(shortened_other)
+        incomplete_indices_out.update(dropped)
 
     return prepared, "; ".join(notes) + ("." if notes else "")
 
@@ -474,9 +480,20 @@ def ensure_handoff_page(conversation: dict[str, Any]) -> dict[str, Any]:
                 start_index = prev_covered
             elif prev_covered == message_count and message_count > 0:
                 previous_page = {field: existing.get(field, "") for field in HANDOFF_PAGE_FIELDS}
-                start_index = max(0, message_count - 6)
+                start_index = 0
 
-        prepared, coverage_note = _prepare_messages_for_model(messages, start_index=start_index)
+        incomplete_indices: set[int] = set()
+        prepared, coverage_note = _prepare_messages_for_model(
+            messages,
+            start_index=start_index,
+            incomplete_indices_out=incomplete_indices,
+        )
+        if start_index > 0 and previous_page is None:
+            covered_count = 0
+        elif incomplete_indices:
+            covered_count = min(incomplete_indices)
+        else:
+            covered_count = message_count
         if coverage_note:
             facts = {**facts, "coverage_note": coverage_note}
         payload = {
@@ -567,7 +584,7 @@ def ensure_handoff_page(conversation: dict[str, Any]) -> dict[str, Any]:
         page = _save_page(
             conversation_id,
             source_content_hash=content_hash,
-            covered_message_count=message_count,
+            covered_message_count=covered_count,
             status="ready",
             fields=fields,
             facts=facts,

@@ -11,6 +11,7 @@ from app.database import create_schema
 from app.main import app
 from app import mcp_server
 from app.services import (
+    conflict_service,
     content_service,
     conversation_service,
     distillation_service,
@@ -1128,17 +1129,20 @@ class TestManagementFeatureParity:
             auto_proj_id = saved_1["project_id"]
             assert auto_proj_id
 
-            # Explicit update supersedes old memory to historical
+            # Unverified agent update against active preference records a pending conflict; explicit resolution supersedes
             saved_2 = mcp_server.save_memory(
                 title="包管理器规范",
                 content="当前项目改为统一使用 bun，不再使用 pnpm。",
                 category="preference",
                 project_id=auto_proj_id,
             )
-            assert saved_2["action"] == "updated"
-            assert saved_2["superseded_id"] == saved_1["id"]
-            assert content_service.get_content(saved_1["id"])["status"] == "historical"
-            assert content_service.get_content(saved_2["id"])["status"] == "active"
+            assert saved_2["action"] == "conflict_recorded"
+            assert saved_2["conflict_id"]
+            assert content_service.get_content(saved_1["id"])["status"] == "active"
+
+            resolved = conflict_service.resolve_conflict(saved_2["conflict_id"], "replace")
+            assert resolved["status"] == "resolved"
+            assert "bun" in content_service.get_content(saved_1["id"])["content"]
 
             # Ambiguous update records a conflict in Inbox without overwriting
             saved_conflict = mcp_server.save_memory(

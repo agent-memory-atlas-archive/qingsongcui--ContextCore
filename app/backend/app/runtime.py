@@ -268,7 +268,10 @@ def _is_contextcore_service_cmdline(cmdline: str) -> bool:
     if re.search(r"(?:^|[/\s])contextcore(?:\.exe)?\s+serve(?:\s|$)", cmdline):
         return True
     if re.search(r"(?:^|\s)uvicorn\s+app\.main:app(?:\s|$)", cmdline):
-        return True
+        lower = cmdline.lower()
+        repo_hint = str(Path(__file__).resolve().parent.parent).lower()
+        if "contextcore" in lower or "senrelay" in lower or repo_hint in lower:
+            return True
     return False
 
 
@@ -1059,13 +1062,19 @@ def verify_plist_ownership(
     if expected_data_dir is not None:
         resolved_data_dir = str(resolve_data_dir(expected_data_dir))
         env_vars = data.get("EnvironmentVariables", {})
-        plist_data_dir = env_vars.get("CONTEXTCORE_DATA_DIR")
+        plist_data_dir = env_vars.get("CONTEXTCORE_DATA_DIR") if isinstance(env_vars, dict) else None
         if not plist_data_dir:
             for i, arg in enumerate(args):
-                if arg == "--data-dir" and i + 1 < len(args):
-                    plist_data_dir = args[i + 1]
+                arg_str = str(arg)
+                if arg_str == "--data-dir" and i + 1 < len(args):
+                    plist_data_dir = str(args[i + 1])
                     break
-        if plist_data_dir and str(Path(plist_data_dir).resolve()) != str(Path(resolved_data_dir).resolve()):
+                if arg_str.startswith("--data-dir="):
+                    plist_data_dir = arg_str.split("=", 1)[1]
+                    break
+        if not plist_data_dir or not str(plist_data_dir).strip():
+            return False, f"Plist does not declare CONTEXTCORE_DATA_DIR matching '{resolved_data_dir}'"
+        if str(Path(plist_data_dir).resolve()) != str(Path(resolved_data_dir).resolve()):
             return False, f"Plist data directory mismatch: '{plist_data_dir}' != '{resolved_data_dir}'"
 
     return True, "OK"
