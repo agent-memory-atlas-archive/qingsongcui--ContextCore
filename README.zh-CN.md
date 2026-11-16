@@ -12,7 +12,7 @@ macOS 原生桌面 App、浏览器工作台与本机常驻服务，让多个 AI 
 
 https://github.com/user-attachments/assets/c5c3e97b-0226-43bb-bff7-3eeed605c0bd
 
-[在产品官网观看](https://senrelay.com/zh/#launch-film) · [下载 1080p 中文 MP4](https://github.com/qingsongcui/ContextCore/releases/download/v1.0.0-beta.2/senrelay-keynote-zh.mp4) · [中文字幕 (.srt)](https://github.com/qiaozhi/ContextCore/releases/download/v1.0.0-beta.2/senrelay-keynote-zh.srt) · [英文配音版 MP4](https://github.com/qingsongcui/ContextCore/releases/download/v1.0.0-beta.2/senrelay-keynote-en.mp4)
+[在产品官网观看](https://senrelay.com/zh/#launch-film) · [下载 1080p 中文 MP4](https://github.com/qingsongcui/ContextCore/releases/download/v1.0.0-beta.2/senrelay-keynote-zh.mp4) · [中文字幕 (.srt)](https://github.com/qingsongcui/ContextCore/releases/download/v1.0.0-beta.2/senrelay-keynote-zh.srt) · [英文配音版 MP4](https://github.com/qingsongcui/ContextCore/releases/download/v1.0.0-beta.2/senrelay-keynote-en.mp4)
 
 ## 产品与核心范围
 
