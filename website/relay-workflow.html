@@ -378,6 +378,10 @@
       <h2>跨 Agent 接力常见问题</h2>
       <div class="guide-faq">
         <details>
+          <summary>为什么 Codex 或 Cursor 只读到了 Claude Code 对话的最后几条？<span aria-hidden="true">+</span></summary>
+          <p>选中会话后，先看返回的消息数。如果原文只加载了一部分，让接手的助手从 <code>offset=0</code> 调用 <code>read_conversation_messages</code>，逐页跟随返回的 <code>next_offset</code>，直到它为 <code>null</code>。每页实际返回的条数可能少于请求值。可以让助手先报出读完的消息总数，再总结。如果每次都停在预览，检查接收端安装的 ContextCore Skill 或命令是否为新版。</p>
+        </details>
+        <details>
           <summary>为什么接力要分页读原始对话，而不是预先生成一段“AI 摘要”？<span aria-hidden="true">+</span></summary>
           <p>预先压缩往往丢失具体的报错行号、已经验证过不通的方案和工具调用结果。通过 <code>read_conversation_messages</code> 分页按原文顺序加载再由接盘助手当场理解，可以把细节损耗降到最低，同时靠短简介先列表避免无谓浪费上下文窗口。</p>
         </details>
@@ -514,6 +518,10 @@ You: 1, run pytest -k webhook first and propose the minimal fix</code></pre>
       <span class="section-kicker">05 · WORKFLOW FAQ</span>
       <h2>Relay Workflow FAQ</h2>
       <div class="guide-faq">
+        <details>
+          <summary>Why did Codex or Cursor load only the last few messages from Claude Code?<span aria-hidden="true">+</span></summary>
+          <p>After you select a conversation, check the returned message count. If the transcript is partial, ask the receiving agent to read from <code>offset=0</code> with <code>read_conversation_messages</code> and follow each returned <code>next_offset</code> until it is <code>null</code>. A page can contain fewer messages than requested. Ask the agent to report how many messages it read before summarizing. If it repeatedly stops at the preview, check that the receiving host has the current ContextCore skill or command installed.</p>
+        </details>
         <details>
           <summary>Why page original transcripts instead of pre-summarizing every turn?<span aria-hidden="true">+</span></summary>
           <p>Background summaries routinely strip exact error lines, file diffs, and failed hypotheses. Reading bounded pages of raw turns via <code>read_conversation_messages</code> lets the receiving model compress details tailored to its next task.</p>

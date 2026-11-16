@@ -245,8 +245,8 @@ for (const [label, doc, faqCount] of [
   ['en/guide.html', enGuide, 3],
   ['hosts.html', hosts, 4],
   ['en/hosts.html', enHosts, 4],
-  ['relay-workflow.html', relay, 4],
-  ['en/relay-workflow.html', enRelay, 4],
+  ['relay-workflow.html', relay, 5],
+  ['en/relay-workflow.html', enRelay, 5],
 ]) {
   const docGraph = JSON.parse(doc.match(/<script type="application\/ld\+json">(.*?)<\/script>/s)[1]);
   assert.deepEqual(docGraph['@graph'].map((n) => n['@type']), ['TechArticle', 'FAQPage', 'BreadcrumbList', 'Person']);
