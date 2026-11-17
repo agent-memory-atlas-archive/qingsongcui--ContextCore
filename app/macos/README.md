@@ -11,7 +11,7 @@ On macOS, install Command Line Tools, the locked backend build extra and the fro
 ```sh
 uv sync --project app/backend --frozen --extra test --extra build
 npm --prefix app/frontend ci --registry=https://registry.npmjs.org
-app/backend/.venv/bin/python app/macos/build.py --from-source --build-number 2
+app/backend/.venv/bin/python app/macos/build.py --from-source --build-number 4
 app/backend/.venv/bin/python app/macos/verify_bundle.py
 app/backend/.venv/bin/python app/macos/verify_native.py
 ```

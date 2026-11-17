@@ -2,6 +2,16 @@
 
 All notable changes to ContextCore will be documented in this file.
 
+## [1.0.0-beta.3] - 2026-11-17
+
+- Harden execution gates for stale and discussion-only handoffs, memory corrections, and mirrored tasks.
+- Correct host attribution and Claude Code hook handling; preserve authorized source identity during conversation refresh and relay.
+- Protect user-owned configuration during provider activation and hook removal; strengthen project/conflict provenance and migration retry behavior.
+- Recover failed management plans and semantic setup in the workbench without treating failures as successful applications.
+- Verify frozen backend integrity, recursive release resources, and wheel template contents as well as frontend hashes.
+- Publish a new matched Apple Silicon macOS App and Python wheel instead of replacing the existing beta.2 assets. Native builds remain ad-hoc signed, with macOS 14.0+ as the target; clean-Mac and 24-hour stability acceptance remain separate.
+- Include the bilingual website keyword guides and partial-relay recovery documentation added since beta.2. Existing launch-film and MCP connector assets remain available from beta.2.
+
 ## [1.0.0-beta.2] - 2026-11-15
 
 - Keep `/contextcore` candidate lists as short recognizable briefs without calling a model; upon concrete selection, avoid handoff-card clutter and return `transcript_paging` so the receiving Agent reads the full transcript sequentially via `read_conversation_messages` (bounded per page to stay within MCP response budgets) and compacts the entire conversation directly in context.
