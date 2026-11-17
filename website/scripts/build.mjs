@@ -8,7 +8,7 @@ import { bundleCss } from './css-bundle.mjs';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const out = path.join(root, 'dist');
 const RELEASE_VERSION = '1.0.0-beta.2';
-const FALLBACK_LASTMOD = '2026-11-16';
+const FALLBACK_LASTMOD = new Date().toISOString().slice(0, 10);
 const rawClarityId = (process.env.CLARITY_ID || '').trim();
 if (rawClarityId && !/^[a-zA-Z0-9]{6,24}$/.test(rawClarityId)) {
   throw new Error(`Invalid CLARITY_ID: ${rawClarityId}`);
@@ -1083,9 +1083,9 @@ const docPages = [
   {
     fileName: 'hosts.html',
     mdFileName: 'hosts.md',
-    zhTitle: `${brand.name} · ${brand.chineseName} — 15 宿主 MCP 与 Skills 配置路径指南`,
-    enTitle: `${brand.name} — MCP & Skills Config Paths Across 15 Agents`,
-    enDesc: `Verified MCP, Skills, and rule config paths across 15 AI coding agents (JSON, TOML, JSON5, YAML) with rollback snapshots and strict 6+9 boundaries.`,
+    zhTitle: `Claude Code、Cursor、Codex MCP 配置与路径指南 — ${brand.name}`,
+    enTitle: `${brand.name} — Claude Code, Cursor & Codex MCP Config`,
+    enDesc: 'MCP configuration paths for Claude Code, Cursor and Codex, with JSON and TOML examples, Skills locations and support across 15 coding agents.',
     zhHref: zhHostsHref,
     enHref: enHostsHref,
     mdHref: hostsMdHref,
@@ -1096,9 +1096,9 @@ const docPages = [
   {
     fileName: 'relay-workflow.html',
     mdFileName: 'relay-workflow.md',
-    zhTitle: `${brand.name} · ${brand.chineseName} — 跨 Agent 对话接力与伴生记忆实战`,
-    enTitle: `${brand.name} — Cross-Agent Relay Workflow: Claude to Codex`,
-    enDesc: `Step-by-step guide to continuing Claude Code tasks in Codex or Cursor with ${brand.name}: short briefs, paged /contextcore relay, and working memory.`,
+    zhTitle: `Claude Code 转 Codex 或 Cursor 继续对话指南 — ${brand.name}`,
+    enTitle: `${brand.name} — Continue Claude Code in Codex or Cursor`,
+    enDesc: 'Continue a Claude Code conversation in Codex or Cursor with Senrelay. Select a source session, read the transcript, review context and resume the task.',
     zhHref: zhRelayHref,
     enHref: enRelayHref,
     mdHref: relayMdHref,
@@ -1107,6 +1107,26 @@ const docPages = [
     proficiencyLevel: 'Intermediate',
   },
 ];
+
+for (const fileName of ['claude-code-memory.html', 'mcp-json-vs-toml-config-guide.html']) {
+  const source = await readFile(path.join(root, fileName), 'utf8');
+  const enTitle = decodeHtml(source.match(/<h1[^>]*data-en="([^"]+)"/)[1]);
+  const enDesc = decodeHtml(source.match(/class="guide-lead"[^>]*data-en="([^"]+)"/)[1]);
+  const href = (prefix) => site ? new URL(prefix + fileName, site).href : './' + prefix + fileName;
+  const mdFileName = fileName.replace('.html', '.md');
+  docPages.push({
+    fileName,
+    mdFileName,
+    zhTitle: applyBrandTokens(decodeHtml(source.match(/<title>(.*?)<\/title>/)[1]), { htmlEscaped: false }),
+    enTitle: applyBrandTokens(enTitle, { htmlEscaped: false }),
+    enDesc: applyBrandTokens(enDesc, { htmlEscaped: false }),
+    zhHref: href('zh/'),
+    enHref: href(''),
+    mdHref: site ? new URL(mdFileName, site).href : './' + mdFileName,
+    lastmod: gitLastmod([fileName, 'scripts/build.mjs']),
+    buildSchema: buildGuideSchema,
+  });
+}
 
 for (const docPage of docPages) {
   await buildBilingualDocPagePair(docPage);
@@ -1150,14 +1170,12 @@ if (site) {
   const sitemapEntries = [
     { loc: enHomeHref, lastmod: homeLastmod, zh: zhHomeHref, en: enHomeHref },
     { loc: zhHomeHref, lastmod: homeLastmod, zh: zhHomeHref, en: enHomeHref },
-    { loc: enHostsHref, lastmod: hostsLastmod, zh: zhHostsHref, en: enHostsHref },
-    { loc: zhHostsHref, lastmod: hostsLastmod, zh: zhHostsHref, en: enHostsHref },
-    { loc: enRelayHref, lastmod: relayLastmod, zh: zhRelayHref, en: enRelayHref },
-    { loc: zhRelayHref, lastmod: relayLastmod, zh: zhRelayHref, en: enRelayHref },
-    { loc: enGuideHref, lastmod: guideLastmod, zh: zhGuideHref, en: enGuideHref },
-    { loc: zhGuideHref, lastmod: guideLastmod, zh: zhGuideHref, en: enGuideHref },
-    { loc: enCompareHref, lastmod: compareLastmod, zh: zhCompareHref, en: enCompareHref },
-    { loc: zhCompareHref, lastmod: compareLastmod, zh: zhCompareHref, en: enCompareHref },
+    ...docPages.flatMap((page) => [page.enHref, page.zhHref].map((loc) => ({
+      loc,
+      lastmod: page.lastmod,
+      zh: page.zhHref,
+      en: page.enHref,
+    }))),
   ];
   const sitemapXml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">\n${sitemapEntries
     .map(
@@ -1264,6 +1282,8 @@ ${brand.name} (${brand.chineseName}) runs natively on macOS 14.0+ (Sonoma or lat
 - [Pricing, License & System Requirements (Markdown)](${pricingMdUrl}): Machine-readable $0 MIT pricing, BYOK policy, Apple Silicon requirements, and scope limits.
 - [English Host Config Reference (15 AI Agents)](${hostsEnRef}) ([Markdown Mirror](${hostsMdHref})): Verified MCP, Skills, and instruction paths across 6 core and 9 extended agents (JSON, TOML, JSON5, YAML) plus safety boundaries.
 - [English Cross-Agent Relay Workflow](${relayEnRef}) ([Markdown Mirror](${relayMdHref})): Step-by-step workflow to continue Claude Code sessions in Codex or Cursor with short briefs, paged reading, and stand-by safeguards.
+- [Claude Code Memory & Context](${site ? new URL('claude-code-memory.html', site).href : './claude-code-memory.html'}): Memory, instructions and cross-agent continuation.
+- [MCP JSON to TOML Guide](${site ? new URL('mcp-json-vs-toml-config-guide.html', site).href : './mcp-json-vs-toml-config-guide.html'}): Claude Code, Cursor and Codex configuration examples.
 - [English Setup & Workflow Guide](${guideEnRef}) ([Markdown Mirror](${guideMdHref})): Homebrew Cask install, first launch (\`xattr -cr\`), source build, and daily workflows.
 - [English 5-Way Comparison & Stack Picker](${compareEnRef}) ([Markdown Mirror](${compareMdHref})): Objective comparison of \`CLAUDE.md\`/\`AGENTS.md\`, Cloud Memory MCP, ${brand.name}, Dotfiles scripts, and single-IDE routers (with interactive picker & real downsides).
 - [Chinese Homepage (中文首页)](${homeZhRef}): 简体中文产品概览、能力矩阵与常见问题。

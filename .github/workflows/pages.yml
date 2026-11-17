@@ -67,6 +67,10 @@ jobs:
           test -f dist/en/relay-workflow.html
           test -f dist/en/guide.html
           test -f dist/en/compare.html
+          test -f dist/claude-code-memory.html
+          test -f dist/zh/claude-code-memory.html
+          test -f dist/mcp-json-vs-toml-config-guide.html
+          test -f dist/zh/mcp-json-vs-toml-config-guide.html
           test -f dist/pricing.md
           test -f dist/index.md
           test -f dist/hosts.md
@@ -116,6 +120,10 @@ jobs:
                 "https://senrelay.com/zh/guide.html",
                 "https://senrelay.com/compare.html",
                 "https://senrelay.com/zh/compare.html",
+                "https://senrelay.com/claude-code-memory.html",
+                "https://senrelay.com/zh/claude-code-memory.html",
+                "https://senrelay.com/mcp-json-vs-toml-config-guide.html",
+                "https://senrelay.com/zh/mcp-json-vs-toml-config-guide.html",
                 "https://senrelay.com/pricing.md",
                 "https://senrelay.com/index.md",
                 "https://senrelay.com/hosts.md",
@@ -127,4 +135,5 @@ jobs:
               ]
             }' | curl -fsS -X POST "https://api.indexnow.org/indexnow" \
               -H "Content-Type: application/json; charset=utf-8" \
+              -w "\nIndexNow HTTP %{http_code}\n" \
               -d @- || echo "::warning::IndexNow submission returned non-2xx; GitHub Pages deployment succeeded."

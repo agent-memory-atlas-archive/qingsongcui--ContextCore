@@ -1,7 +1,7 @@
 export const metaEn = {
-  title: 'Senrelay — macOS Multi-Agent Relay, Memory & MCP Workbench',
-  description: 'Free ($0 MIT) macOS Apple Silicon workbench for cross-agent session relay (/contextcore), source-linked shared memory, and multi-host MCP sync.',
-  ogTitle: 'Senrelay — macOS Multi-Agent Relay, Memory & MCP Workbench',
+  title: 'Senrelay — Memory & MCP for Claude Code, Codex & Cursor',
+  description: 'Local memory, conversation context relay and MCP configuration for Claude Code, Codex and Cursor. Free MIT workbench for Apple Silicon macOS.',
+  ogTitle: 'Senrelay — Memory & MCP for Claude Code, Codex & Cursor',
   ogDescription: 'Free ($0 MIT, no signup) local macOS workbench: type /contextcore to relay recent conversations across AI agents, keep shared memory, and sync MCP.',
   twitterDescription: 'Free ($0 MIT) macOS workbench for cross-agent conversation relay (/contextcore), source-linked shared memory, and multi-host MCP & Skills management.',
   locale: 'en_US',
@@ -74,6 +74,8 @@ export const attrEn = {
 };
 
 export const textEn = {
+  'Claude Code 记忆': 'Claude Code Memory',
+  'MCP 配置示例': 'MCP Config Examples',
   'Agent 管理': 'Agent management',
   '了解 Agent 管理': 'Explore Agent management',
   '多宿主配置管理': 'Multi-host configuration management',
@@ -81,7 +83,7 @@ export const textEn = {
   '跨 Agent 项目接力': 'Cross-agent relay',
   '模型、工具、习惯，各归其位': 'Models, tools, and preferences in their own place',
   'Senrelay · 续境 — 换个 Agent，思路接着走。': 'Senrelay — New agent. Same thread.',
-  'Senrelay · 续境 — macOS 多 Agent 接力、记忆与 MCP 工作台': 'Senrelay — macOS Multi-Agent Relay, Memory & MCP Workbench',
+  'Senrelay · 续境 — Claude Code、Codex、Cursor 本地记忆与 MCP 工作台': 'Senrelay — Memory & MCP for Claude Code, Codex & Cursor',
   '跳到主要内容': 'Skip to main content',
   '· 续境': '',
   '为什么 Senrelay': 'Why Senrelay',

@@ -1,0 +1,443 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#121412">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Claude Code 记忆与上下文管理指南 — Senrelay 续境</title>
+  <meta name="description" content="了解 Claude Code 记忆、项目规则与对话上下文的区别，并通过 Senrelay 在 Codex 或 Cursor 中接着处理已有任务。">
+  <meta property="og:type" content="article">
+  <meta property="og:locale" content="zh_CN">
+  <meta property="og:site_name" content="Senrelay · 续境">
+  <meta property="og:title" content="Claude Code 记忆与上下文管理指南 — Senrelay 续境">
+  <meta property="og:description" content="了解 Claude Code 记忆、项目规则与对话上下文的区别，并通过 Senrelay 在 Codex 或 Cursor 中接着处理已有任务。">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Claude Code 记忆与上下文管理指南 — Senrelay 续境">
+  <meta name="twitter:description" content="了解 Claude Code 记忆、项目规则与对话上下文的区别，并通过 Senrelay 在 Codex 或 Cursor 中接着处理已有任务。">
+  <!-- deployment-metadata -->
+  <link rel="icon" href="./favicon.ico" sizes="48x48">
+  <link rel="icon" href="./assets/icon-192.png" type="image/png" sizes="192x192">
+  <link rel="apple-touch-icon" href="./assets/apple-touch-icon.png" sizes="180x180">
+  <link rel="stylesheet" href="./assets/site.css">
+  <script>document.documentElement.classList.add('has-js');</script>
+  <style>
+    .guide-page p code, .guide-page li code, .guide-page td code, .guide-page th code {
+      overflow-wrap: anywhere;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 12px;
+      padding: 1px 5px;
+      border-radius: 3px;
+      background: rgba(183, 196, 161, 0.08);
+      border: 0;
+      color: #d6e2c3;
+    }
+    .guide-page {
+      padding-top: 56px;
+      padding-bottom: 104px;
+    }
+    .guide-header {
+      margin-bottom: 40px;
+      padding-bottom: 32px;
+      border-bottom: 1px solid var(--line);
+    }
+    .guide-header h1 {
+      font-size: clamp(28px, 3.8vw, 42px);
+      line-height: 1.24;
+      letter-spacing: -0.03em;
+      margin: 16px 0 16px;
+      color: var(--ink);
+    }
+    .guide-lead {
+      color: var(--muted);
+      font-size: 15.5px;
+      line-height: 1.82;
+      max-width: 68ch;
+    }
+    .guide-meta-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px 22px;
+      margin-top: 18px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+      color: var(--sage);
+    }
+    .callout {
+      background: transparent;
+      border: 0;
+      border-top: 1px solid var(--line-strong);
+      border-bottom: 1px solid var(--line);
+      border-radius: 0;
+      padding: 26px 0;
+      margin: 0 0 52px;
+      box-shadow: none;
+    }
+    .callout-title {
+      font-weight: 560;
+      font-size: 13px;
+      letter-spacing: 0.04em;
+      color: var(--sage);
+      margin-bottom: 16px;
+    }
+    .callout-list {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 28px;
+    }
+    .callout-list p {
+      color: var(--muted);
+      font-size: 13.5px;
+      line-height: 1.8;
+      margin: 0;
+    }
+    .callout-list p strong {
+      display: block;
+      color: var(--ink);
+      font-size: 14.5px;
+      font-weight: 560;
+      margin-bottom: 6px;
+    }
+    .guide-section {
+      margin: 56px 0;
+      padding-top: 32px;
+      border-top: 1px solid var(--line);
+    }
+    .guide-section .section-kicker {
+      display: block;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      color: var(--sage);
+      margin-bottom: 8px;
+    }
+    .guide-section h2 {
+      font-size: 23px;
+      font-weight: 560;
+      letter-spacing: -0.02em;
+      margin: 0 0 18px;
+      color: var(--ink);
+    }
+    .guide-section h3 {
+      font-size: 15.5px;
+      font-weight: 560;
+      color: #dce5ce;
+      margin: 26px 0 10px;
+    }
+    .guide-section p {
+      color: var(--muted);
+      margin-bottom: 14px;
+      font-size: 14.5px;
+      line-height: 1.82;
+      max-width: 68ch;
+    }
+    .guide-section ul, .guide-section ol {
+      margin: 12px 0 22px 20px;
+      padding: 0;
+      color: var(--muted);
+      font-size: 14.5px;
+      line-height: 1.82;
+      max-width: 68ch;
+    }
+    .guide-section li {
+      margin-bottom: 10px;
+    }
+    .guide-section li strong {
+      color: var(--ink);
+      font-weight: 560;
+    }
+    pre.code-block {
+      background: #141712;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 18px 20px;
+      overflow-x: auto;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 13px;
+      line-height: 1.65;
+      color: #dce5ce;
+      margin: 14px 0 22px;
+      box-shadow: none;
+    }
+    pre.code-block code {
+      font-family: inherit;
+      background: none;
+      border: 0;
+      padding: 0;
+    }
+    .code-comment {
+      color: #7c8770;
+    }
+    .boundary-list {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 32px 40px;
+      margin-top: 20px;
+    }
+    .boundary-card {
+      background: transparent;
+      border: 0;
+      border-top: 1px solid var(--line-soft);
+      border-radius: 0;
+      padding: 18px 0 0;
+      margin: 0;
+    }
+    .boundary-card h3 {
+      font-size: 15px;
+      font-weight: 560;
+      color: var(--sage);
+      margin: 0 0 10px;
+    }
+    .boundary-card p {
+      font-size: 13.5px;
+      color: var(--muted);
+      margin: 0;
+      line-height: 1.8;
+    }
+    .guide-faq details {
+      border-top: 1px solid var(--line-soft);
+      padding: 16px 0;
+    }
+    .guide-faq details:last-child {
+      border-bottom: 1px solid var(--line);
+    }
+    .guide-faq summary {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      cursor: pointer;
+      font-size: 14.5px;
+      font-weight: 540;
+      color: #eef3e8;
+      list-style: none;
+    }
+    .guide-faq summary::-webkit-details-marker {
+      display: none;
+    }
+    .guide-faq details p {
+      margin: 10px 0 0;
+      font-size: 13.5px;
+      line-height: 1.78;
+      color: var(--muted);
+      max-width: 66ch;
+    }
+    .lang-divider {
+      margin: 56px 0 40px;
+      border: 0;
+      border-top: 1px solid var(--line);
+    }
+    html.has-js .lang-divider {
+      display: none;
+    }
+    html.has-js[data-guide-lang="zh"] [data-guide-section="en"],
+    html.has-js[data-guide-lang="en"] [data-guide-section="zh"] {
+      display: none;
+    }
+    @media (max-width: 860px) {
+      .callout-list,
+      .boundary-list {
+        grid-template-columns: 1fr;
+        gap: 20px;
+      }
+    }
+    .guide-page pre {
+      max-width: 100%;
+      overflow-x: auto;
+      padding: 20px;
+      border: 1px solid var(--line);
+      font-size: 13px;
+      line-height: 1.7;
+    }
+  </style>
+</head>
+<body>
+<a class="skip" href="#main" data-zh="跳到主要内容" data-en="Skip to main content">跳到主要内容</a>
+<header class="site-header"><div class="header wrap">
+<a class="brand" href="./" aria-label="Senrelay 续境首页" data-aria-zh="Senrelay 续境首页" data-aria-en="Senrelay home"><img class="brand-symbol" src="./assets/senrelay-logo-display-v1.png" width="28" height="35" decoding="async" alt="" aria-hidden="true">Senrelay<span class="brand-cn" data-zh="· 续境" data-en="">· 续境</span></a>
+<nav aria-label="页面导航" data-aria-zh="页面导航" data-aria-en="Page navigation"><a href="./" data-zh="← 首页" data-en="← Home">← 首页</a><a href="./relay-workflow.html" data-zh="接力流程" data-en="Relay Workflow">接力流程</a><a href="./compare.html" data-zh="方案对比" data-en="Compare">方案对比</a><a href="./guide.html" data-zh="运行指南" data-en="Setup Guide">运行指南</a></nav>
+<div class="header-tools"><div class="language-switch" role="group" aria-label="语言" data-aria-zh="语言" data-aria-en="Language"><a href="./claude-code-memory.html" data-lang="zh" aria-current="page" lang="zh-CN">中</a><a href="./en/claude-code-memory.html" data-lang="en" lang="en">EN</a></div>
+<a class="header-github" href="https://github.com/qingsongcui/ContextCore" target="_blank" rel="noopener noreferrer">GitHub <span aria-hidden="true">↗</span><span class="sr-only" data-zh="（新窗口）" data-en="(opens in a new window)">（新窗口）</span></a></div>
+
+</div>
+</header>
+
+<main id="main" class="wrap guide-page"><div class="guide-header"><h1 data-zh="Claude Code 记忆与上下文管理指南 — Senrelay 续境" data-en="Claude Code Memory &amp; Context Management — Senrelay">Claude Code 记忆与上下文管理指南 — Senrelay 续境</h1>
+<p class="guide-lead" data-zh="了解 Claude Code 记忆、项目规则与对话上下文的区别，并通过 Senrelay 在 Codex 或 Cursor 中接着处理已有任务。" data-en="Understand Claude Code memory, project instructions, and conversation context, then continue a task in Codex or Cursor with local, source-linked Senrelay memory.">了解 Claude Code 记忆、项目规则与对话上下文的区别，并通过 Senrelay 在 Codex 或 Cursor 中接着处理已有任务。</p>
+<p data-zh="更新于 2026-11-17 · Senrelay 维护者" data-en="Updated November 17, 2026 · Senrelay maintainers">更新于 2026-11-17 · Senrelay 维护者</p>
+</div>
+<div data-guide-section="zh">
+<section class="guide-section" id="memory-context"><h2>Claude Code 记忆、规则文件和对话上下文各做什么？</h2>
+<p>项目规则记录编码约定和工作要求，对话原文记录具体报错、尝试与决策，工作记忆记录当前任务状态和可复用经验。理解当前问题通常需要同时参考这些资料。Senrelay 在本机保存可追溯来源的记忆，使用时可以回到原始记录核对。</p>
+<p>Claude Code 自身的记忆与规则用法见 <a class="inline-link" href="https://code.claude.com/docs/en/memory">Claude Code 官方记忆文档</a>。Senrelay 的跨助手接力还需目标助手接入本机服务。</p>
+</section>
+
+<section class="guide-section" id="continue-work"><h2>从 Claude Code 切到 Codex 或 Cursor 继续任务</h2>
+<ol><li>在 Apple Silicon Mac 上按 <a class="inline-link" href="./guide.html">安装指南</a>启动 Senrelay，并接入来源和目标助手。</li>
+<li>在目标助手输入 <code>/contextcore</code>，按标题与简介选择原对话。</li>
+<li>只回复序号时，目标助手读取原文并整理前情，然后等待下一条任务指令。选场时同时说明具体任务，则按该指令继续。</li>
+<li>核对原对话中的文件路径、已完成工作、限制与下一步，再让目标助手继续。具体示例见 <a class="inline-link" href="./relay-workflow.html">Claude Code 转 Codex 接力流程</a>。</li>
+</ol>
+</section>
+
+<section class="guide-section" id="limits"><h2>本地记忆与接力的适用范围</h2>
+<p>当前桌面版面向 macOS 14.0+ Apple Silicon。Claude Code、Codex、Cursor 等六类核心宿主支持会话接力，其余扩展宿主的配置能力见 <a class="inline-link" href="./hosts.html">MCP 配置与宿主支持表</a>。原文分页读取后会在接收助手的上下文窗口内压缩，仍受该助手的窗口和工具权限约束。接力结果需要检查。</p>
+</section>
+
+<section class="guide-section" id="memory-faq"><h2>常见问题</h2>
+<div class="guide-faq"><details><summary>配置 MCP 就会自动同步全部对话吗？</summary>
+<p>MCP 配置建立工具连接。会话接力还需要已接入的来源记录、目标助手的伴生指引与明确的接力指令。日常共享记忆按授权采集和使用。</p>
+</details>
+<details><summary>Senrelay 能扩展 Claude Code 的上下文窗口吗？</summary>
+<p>上下文窗口由助手和模型决定。Senrelay 负责组织历史、来源和任务状态，接收助手读取后在自己的窗口内整理。</p>
+</details>
+</div>
+</section>
+</div>
+<div data-guide-section="en">
+<section class="guide-section" id="memory-context"><h2>What do Claude Code memory, instructions, and conversation context contain?</h2>
+<p>Project instructions describe coding conventions and working rules. Transcripts preserve errors, attempts, and decisions. Working memory records task state and reusable lessons. Senrelay keeps source-linked memories locally so an agent can check the original record when it needs more context.</p>
+<p>See the <a class="inline-link" href="https://code.claude.com/docs/en/memory">official Claude Code memory documentation</a> for its own memory and instruction features. Cross-agent continuation with Senrelay also requires connecting the receiving assistant to the local service.</p>
+</section>
+
+<section class="guide-section" id="continue-work"><h2>Continue Claude Code work in Codex or Cursor</h2>
+<ol><li>Follow the <a class="inline-link" href="./guide.html">installation guide</a> on an Apple Silicon Mac and connect the source and receiving assistants.</li>
+<li>Enter <code>/contextcore</code> in the receiving assistant and identify the old conversation by its title and brief.</li>
+<li>A number-only selection loads and compacts the transcript, then waits for the next task instruction. Include a concrete task with the selection to continue directly.</li>
+<li>Check file paths, completed work, constraints, and next steps against the original conversation. Follow the <a class="inline-link" href="./relay-workflow.html">Claude Code to Codex relay walkthrough</a>.</li>
+</ol>
+</section>
+
+<section class="guide-section" id="limits"><h2>Local memory and supported assistants</h2>
+<p>The desktop app targets macOS 14.0+ on Apple Silicon. Six core hosts, including Claude Code, Codex, and Cursor, support conversation relay. See the <a class="inline-link" href="./hosts.html">MCP configuration and host support reference</a> for each host. After paged transcript reading, the receiving assistant compacts the content within its own context window and tool permissions. Check the continuation result.</p>
+</section>
+
+<section class="guide-section" id="memory-faq"><h2>Common questions</h2>
+<div class="guide-faq"><details><summary>Does adding MCP automatically sync every conversation?</summary>
+<p>MCP configuration connects tools. Conversation relay also needs an available source record, companion instructions in the receiving assistant, and an explicit relay request. Everyday shared memory follows authorized collection and use.</p>
+</details>
+<details><summary>Does Senrelay increase the Claude Code context window?</summary>
+<p>The assistant and model determine the context window. Senrelay organizes history, sources, and task state for the receiving agent to read and compact within its own window.</p>
+</details>
+</div>
+</section>
+</div>
+</main>
+
+
+<footer class="footer wrap">
+<a class="brand" href="./" aria-label="Senrelay 续境首页" data-aria-zh="Senrelay 续境首页" data-aria-en="Senrelay home"><img class="brand-symbol" src="./assets/senrelay-logo-display-v1.png" width="26" height="33" loading="lazy" decoding="async" alt="" aria-hidden="true">Senrelay<span class="brand-cn" data-zh="· 续境" data-en="">· 续境</span></a>
+<p>New agent. Same thread.</p>
+
+<div>
+  <a href="./" data-zh="首页" data-en="Home">首页</a>
+  <a href="./relay-workflow.html" data-zh="接力流程" data-en="Relay Workflow">接力流程</a>
+  <a href="./compare.html" data-zh="方案对比" data-en="Compare">方案对比</a>
+  <a href="./guide.html" data-zh="运行指南" data-en="Setup Guide">运行指南</a>
+  <a href="./pricing.md" data-zh="免费开源 ($0)" data-en="Pricing ($0)">免费开源 ($0)</a>
+  <a href="https://github.com/qingsongcui/ContextCore" target="_blank" rel="noopener noreferrer">GitHub ↗<span class="sr-only" data-zh="（新窗口）" data-en="(opens in a new window)">（新窗口）</span></a>
+  <a href="https://github.com/qingsongcui/ContextCore/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">MIT License<span class="sr-only" data-zh="（新窗口）" data-en="(opens in a new window)">（新窗口）</span></a>
+  <a href="#main" data-zh="回到顶部 ↑" data-en="Back to top ↑">回到顶部 ↑</a>
+</div>
+
+</footer>
+<script type="module">
+  const LANG_KEY = 'senrelay.website.language';
+  const root = document.documentElement;
+  const docDefaultLang = (root.getAttribute('lang') || '').toLowerCase().startsWith('en') ? 'en' : 'zh';
+  const hasBothSections = Boolean(document.querySelector('[data-guide-section="zh"]') && document.querySelector('[data-guide-section="en"]'));
+  const zhTitle = document.title;
+  const brandPrefix = zhTitle.split('—')[0].trim().replace(/\s*·\s*.*$/, '') || 'Senrelay';
+  const enTitle = 'Claude Code Memory & Context Management — Senrelay';
+  const metaDesc = document.querySelector('meta[name="description"]');
+  const zhDesc = metaDesc ? metaDesc.getAttribute('content') : '';
+  const enDesc = 'Understand Claude Code memory, project instructions, and conversation context, then continue a task in Codex or Cursor with local, source-linked Senrelay memory.';
+
+  function detectLanguage() {
+    const override = new URLSearchParams(window.location.search).get('lang');
+    if (override === 'zh' || override === 'en') return override;
+    if (!hasBothSections) return docDefaultLang;
+    try {
+      const stored = window.localStorage.getItem(LANG_KEY);
+      if (stored === 'zh' || stored === 'en') return stored;
+    } catch { /* Storage is optional. */ }
+    return docDefaultLang;
+  }
+
+  let language = detectLanguage();
+
+  function syncGuideControls(lang) {
+    document.querySelectorAll('[data-lang]').forEach(ctrl => {
+      const active = ctrl.dataset.lang === lang;
+      if (ctrl.hasAttribute('href') || ctrl.tagName === 'A') {
+        if (active) ctrl.setAttribute('aria-current', 'page');
+        else ctrl.removeAttribute('aria-current');
+      }
+      if (ctrl.hasAttribute('aria-pressed') || ctrl.tagName === 'BUTTON') {
+        ctrl.setAttribute('aria-pressed', String(active));
+      }
+    });
+    const group = document.querySelector('.language-switch');
+    if (group) group.setAttribute('aria-label', lang === 'en' ? 'Language' : '语言');
+  }
+
+  function applyGuideLanguage(lang) {
+    if (hasBothSections) {
+      root.lang = lang === 'en' ? 'en' : 'zh-CN';
+      root.dataset.guideLang = lang;
+      document.title = lang === 'en' ? enTitle : zhTitle;
+      if (metaDesc) metaDesc.setAttribute('content', lang === 'en' ? enDesc : zhDesc);
+      document.querySelectorAll('[data-guide-section]').forEach(section => {
+        section.hidden = section.dataset.guideSection !== lang;
+      });
+      document.querySelectorAll('[data-zh][data-en]').forEach(el => {
+        el.textContent = lang === 'en' ? el.dataset.en : el.dataset.zh;
+      });
+      document.querySelectorAll('[data-aria-zh][data-aria-en]').forEach(el => {
+        el.setAttribute('aria-label', lang === 'en' ? el.dataset.ariaEn : el.dataset.ariaZh);
+      });
+    } else {
+      root.dataset.guideLang = docDefaultLang;
+    }
+    syncGuideControls(hasBothSections ? lang : docDefaultLang);
+  }
+
+  function setGuideLanguage(next) {
+    if ((next !== 'zh' && next !== 'en') || next === language) return;
+    language = next;
+    try { window.localStorage.setItem(LANG_KEY, next); } catch { /* Storage is optional. */ }
+    try {
+      const url = new URL(window.location.href);
+      if (url.searchParams.has('lang')) {
+        url.searchParams.delete('lang');
+        window.history.replaceState(null, '', url);
+      }
+    } catch { /* ignore */ }
+    applyGuideLanguage(next);
+  }
+
+  root.classList.add('has-js');
+  if (!hasBothSections && language !== docDefaultLang) {
+    const targetCtrl = document.querySelector(`[data-lang="${language}"]`);
+    const targetHref = targetCtrl && targetCtrl.getAttribute('href');
+    if (targetHref) window.location.replace(targetHref);
+  }
+  document.querySelectorAll('[data-lang]').forEach(ctrl => {
+    ctrl.addEventListener('click', event => {
+      const next = ctrl.dataset.lang;
+      if (next !== 'zh' && next !== 'en') return;
+      try { window.localStorage.setItem(LANG_KEY, next); } catch { /* Storage is optional. */ }
+      if (!hasBothSections) {
+        if (next === docDefaultLang) event.preventDefault();
+        return;
+      }
+      if (!event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
+        event.preventDefault();
+        setGuideLanguage(next);
+      }
+    });
+  });
+  applyGuideLanguage(language);
+</script>
+</body>
+</html>

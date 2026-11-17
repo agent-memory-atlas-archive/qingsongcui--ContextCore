@@ -373,7 +373,17 @@ assert.ok(!llmsFull.includes('6-point'), 'no stale 6-point handoff card referenc
 
 const production = enHtml.includes('content="index, follow"');
 const expectedClarityId = (process.env.CLARITY_ID || '').trim();
-const deployedDocs = [enHtml, html, enGuide, guide, enCompare, compare, enHosts, hosts, enRelay, relay];
+const addedDocs = [];
+for (const fileName of ['claude-code-memory.html', 'mcp-json-vs-toml-config-guide.html']) {
+  for (const prefix of ['', 'zh/']) {
+    const doc = await readFile(path.join(root, prefix, fileName), 'utf8');
+    assert.equal((doc.match(/<h1\b/g) || []).length, 1, `${prefix}${fileName} has one primary heading`);
+    assert.match(doc, /href="\.\/guide.html"/, 'new guides link to installation');
+    assert.match(doc, prefix ? /<html lang="zh-CN"/ : /<html lang="en"/);
+    addedDocs.push(doc);
+  }
+}
+const deployedDocs = [enHtml, html, enGuide, guide, enCompare, compare, enHosts, hosts, enRelay, relay, ...addedDocs];
 const legacyRedirects = [legacyEnHome, legacyEnGuide, legacyEnCompare, legacyEnHosts, legacyEnRelay];
 if (production) {
   for (const doc of deployedDocs) {
@@ -401,9 +411,9 @@ if (production) {
   }
   const sitemap = await readFile(path.join(root, 'sitemap.xml'), 'utf8');
   assert.match(sitemap, /xmlns:xhtml="http:\/\/www\.w3\.org\/1999\/xhtml"/);
-  assert.equal((sitemap.match(/<url>/g) || []).length, 10, 'ten canonical URLs in sitemap.xml');
+  assert.equal((sitemap.match(/<url>/g) || []).length, 14, 'fourteen canonical URLs in sitemap.xml');
   const lastmods = [...sitemap.matchAll(/<lastmod>(\d{4}-\d{2}-\d{2})<\/lastmod>/g)].map((m) => m[1]);
-  assert.equal(lastmods.length, 10, 'valid lastmod dates');
+  assert.equal(lastmods.length, 14, 'valid lastmod dates');
   assert.ok(lastmods.every((d) => d >= '2026-11-15'), 'sitemap lastmod dates >= 2026-11-15');
   assert.ok(sitemap.includes('/hosts.html') && sitemap.includes('/zh/hosts.html') && sitemap.includes('/relay-workflow.html'), 'sitemap includes English root and /zh/ URLs');
   assert.ok(!sitemap.includes('/en/'), 'sitemap excludes legacy /en/ redirect URLs');
