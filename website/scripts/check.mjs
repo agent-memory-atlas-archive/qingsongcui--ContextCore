@@ -136,7 +136,7 @@ await access(path.join(root, 'favicon.ico'));
 await access(path.join(root, 'assets/icon-192.png'));
 await access(path.join(root, 'assets/apple-touch-icon.png'));
 await access(path.join(root, 'assets/senrelay-logo-display-v1.png'));
-await access(path.join(root, 'assets/social-original-v1.png'));
+await access(path.join(root, 'assets/icon-192.png'));
 await access(path.join(root, 'assets/senrelay-logo-original-v1.png'));
 
 let socialPngExists = true;
@@ -395,7 +395,7 @@ if (production) {
     assert.match(doc, /hreflang="x-default"/);
     assert.match(doc, /type="text\/markdown"/);
     assert.match(doc, /property="og:image"/);
-    assert.match(doc, /property="og:image:width" content="1536"/);
+    assert.match(doc, /property="og:image:width" content="192"/);
     if (expectedClarityId) {
       assert.ok(
         doc.includes('https://www.clarity.ms/tag/') && doc.includes(`"${expectedClarityId}"`),

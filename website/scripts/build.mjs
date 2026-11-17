@@ -295,7 +295,7 @@ function buildHomepageSchema({ lang, pageUrl, siteDesc, appDesc, faqEntities, la
     ...(site
       ? {
           url: pageUrl,
-          screenshot: new URL('assets/social-original-v1.png', site).href,
+          image: new URL('assets/icon-192.png', site).href,
         }
       : {}),
     downloadUrl: releaseTagUrl,
@@ -362,7 +362,7 @@ function buildGuideSchema({
           '@id': `${pageUrl}#article`,
           url: pageUrl,
           mainEntityOfPage: pageUrl,
-          image: new URL('assets/social-original-v1.png', site).href,
+          image: new URL('assets/icon-192.png', site).href,
         }
       : {}),
     headline,
@@ -422,7 +422,7 @@ function buildCompareSchema({ lang, pageUrl, homeUrl, headline, description, faq
           '@id': `${pageUrl}#article`,
           url: pageUrl,
           mainEntityOfPage: pageUrl,
-          image: new URL('assets/social-original-v1.png', site).href,
+          image: new URL('assets/icon-192.png', site).href,
         }
       : {}),
     headline,
@@ -574,7 +574,7 @@ function renderAnalyticsHeadTags() {
 
 function renderDeploymentHead({ canonicalHref, zhHref, enHref, mdHref, altOgLocale, imageAlt }) {
   if (!site) return '';
-  const socialImg = escapeHtml(new URL('assets/social-original-v1.png', site).href);
+  const socialImg = escapeHtml(new URL('assets/icon-192.png', site).href);
   const llmsHref = escapeHtml(new URL('llms.txt', site).href);
   const llmsFullHref = escapeHtml(new URL('llms-full.txt', site).href);
   const pricingMdHref = escapeHtml(new URL('pricing.md', site).href);
@@ -591,11 +591,11 @@ function renderDeploymentHead({ canonicalHref, zhHref, enHref, mdHref, altOgLoca
     `<meta property="og:locale:alternate" content="${escapeHtml(altOgLocale)}">`,
     `<meta property="og:url" content="${escapeHtml(canonicalHref)}">`,
     `<meta property="og:image" content="${socialImg}">`,
-    `<meta property="og:image:width" content="1536">`,
-    `<meta property="og:image:height" content="1024">`,
-    `<meta property="og:image:alt" content="${escapeHtml(imageAlt)}">`,
+    `<meta property="og:image:width" content="192">`,
+    `<meta property="og:image:height" content="192">`,
+    `<meta property="og:image:alt" content="${escapeHtml(`${brand.name} logo`)}">`,
     `<meta name="twitter:image" content="${socialImg}">`,
-    `<meta name="twitter:image:alt" content="${escapeHtml(imageAlt)}">`,
+    `<meta name="twitter:image:alt" content="${escapeHtml(`${brand.name} logo`)}">`,
     ...renderAnalyticsHeadTags(),
   ].join('\n  ');
 }
@@ -778,7 +778,7 @@ await cp(path.join(root, 'assets'), path.join(out, 'assets'), {
   filter: (source) =>
     source !== cssSource &&
     !source.startsWith(cssSource + path.sep) &&
-    path.basename(source) !== 'social.png',
+    !['social.png', 'social-original-v1.png'].includes(path.basename(source)),
 });
 await cp(path.join(root, 'assets', 'favicon.ico'), path.join(out, 'favicon.ico'));
 await writeFile(path.join(out, 'assets', 'site.css'), await bundleCss());
