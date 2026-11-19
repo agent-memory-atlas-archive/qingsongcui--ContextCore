@@ -166,7 +166,7 @@ app/backend/.venv/bin/contextcore generate-plist --data-dir "$HOME/.contextcore/
 REST 版本化变更需要当前 `expected_version`；批量内容删除/合并提供完整 `expected_versions`。冲突返回 409 后重读，不能静默覆盖。MCP 永久删除需要 `confirmed=True` 和正整数 `expected_version`。初始创建与不同接口的版本要求按真实 API 契约，不将“所有操作都有 CAS”泛化到未实现接口。
 
 ## 验证状态
-验证命令统一见 [CONTRIBUTING](../CONTRIBUTING.md)。当前自动化门禁覆盖后端测试（1,648 项通过、1 项 100k 用量性能测试按需开启）、前端类型检查 / lint / Vitest（205 项）与双语覆盖率（1,518 条文本）、`scripts/tests`（29 项）、安装包与内置资源完整性（`check_release_readiness.py`）、原生 macOS 应用包与六宿主 Hook 沙箱校验，以及全仓安全扫描。历史参考记录包含 4 家 `live_host` 接棒、2 家 `live_protocol` 与 3 笔合成输入测试记录；随包参考记录不代表所有界面、所有记忆写入、语义质量或更广宿主配置管理完整等价，也不替代用户本机环境、真实外部账号、付费模型调用或全新 Mac 设备的独立验收。
+验证命令见 [CONTRIBUTING](../CONTRIBUTING.md)。当前发行版的测试数、打包和安装验证见 [Beta.4 验证记录](../docs/release-readiness.md#beta4-verification)。历史参考记录包含 4 家 `live_host` 接棒、2 家 `live_protocol` 与 3 笔合成输入测试记录；随包参考记录不代表所有界面、所有记忆写入、语义质量或更广宿主配置管理完整等价，也不替代用户本机环境、真实外部账号、付费模型调用或全新 Mac 设备的独立验收。
 
 ## macOS 桌面 App
 
@@ -183,8 +183,8 @@ An explicit standalone database path does not grant ownership of its parent.
 These controls protect other OS accounts; they do not hide data from the same
 OS user, privileged processes, or copies already made elsewhere.
 
-Release identities use an explicit mapping: frontend/tag `1.0.0-beta.3` /
-`v1.0.0-beta.3`, Python/wheel `1.0.0b3`, and native short version `1.0.0` plus
+Release identities use an explicit mapping: frontend/tag `1.0.0-beta.4` /
+`v1.0.0-beta.4`, Python/wheel `1.0.0b4`, and native short version `1.0.0` plus
 a numeric build number. `BUILD.json` retains all mapped versions. Stable
 versions retain `MAJOR.MINOR.PATCH` throughout. Unknown suffixes, mismatched
 tags and wrong wheel metadata block packaging. This mapping does not select

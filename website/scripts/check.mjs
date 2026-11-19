@@ -352,6 +352,11 @@ assert.ok(hosts.includes('~/.claude.json') && hosts.includes('~/.openclaw/opencl
 assert.ok(enHosts.includes('~/.claude.json') && enHosts.includes('~/.openclaw/openclaw.json') && enHosts.includes('~/.config/opencode/opencode.json'), 'en/hosts.html verifies concrete config file paths');
 assert.ok(relay.includes('must_not_execute=true') && relay.includes('read_conversation_messages'), 'relay-workflow.html covers relay tool contract');
 assert.ok(enRelay.includes('must_not_execute=true') && enRelay.includes('read_conversation_messages'), 'en/relay-workflow.html covers relay tool contract');
+for (const [homepage, workflow] of [[html, relay], [enHtml, enRelay]]) {
+  assert.match(homepage, /relay-workflow\.html#relay-evidence/);
+  assert.match(workflow, /id="relay-evidence"/);
+  assert.match(workflow, /docs\/evidence\.md#recorded-host-continuation/);
+}
 
 for (const [label, doc, pickerAttr] of [['compare.html', compare, 'zh'], ['en/compare.html', enCompare, 'en']]) {
   assert.match(doc, new RegExp(`data-picker="${pickerAttr}"`), `interactive stack picker exists in ${label}`);

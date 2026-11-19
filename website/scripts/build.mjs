@@ -1330,7 +1330,9 @@ ${brand.name} (${brand.chineseName}) runs natively on macOS 14.0+ (Sonoma or lat
 const llmsFullContent = `${llmsContent}
 ## Full-Transcript Cross-Agent Relay & Compaction Specification
 
-When \`/contextcore\` relays a conversation across Claude Code, Codex, Cursor, Antigravity, OMP, or OpenCode, it avoids lossy external handoff cards and instead enforces six engineering guarantees:
+The \`/contextcore\` relay workflow is available for connected core hosts. Historical continuation was exercised in four live hosts (Codex CLI, OMP CLI, Antigravity Desktop and OpenCode) and at the protocol level in Cursor Desktop and Claude Code. Memory writes have synthetic coverage across all six. See the [recorded host evidence](${brand.github}/blob/main/docs/evidence.md#recorded-host-continuation).
+
+The relay protocol has six steps:
 
 1. **01 — Short-Brief Candidate Discovery**: Candidate lists display recognizable titles and short briefs without calling a model or pre-writing summaries.
 2. **02 — Native Session & Worktree Disambiguation**: Preserves native session UUIDs and worktree/cwd identity so same-title or unassigned sessions stay distinct; refreshes only the selected authorized source on demand.

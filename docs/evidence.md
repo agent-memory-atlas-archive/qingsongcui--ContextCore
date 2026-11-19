@@ -1,14 +1,14 @@
 # Public evidence register
 
-Source package version: `1.0.0-beta.3` (Python package `1.0.0b3`, native macOS short version `1.0.0` plus numeric build number). Surface limits are documented in [support-matrix](support-matrix.md). Requirements: [specification](SPECIFICATION.md). Delivery boundaries: [release readiness](release-readiness.md) and [known issues](known-issues.md).
+Source package version: `1.0.0-beta.4` (Python package `1.0.0b4`, native macOS short version `1.0.0` plus numeric build number). Surface limits are documented in [support-matrix](support-matrix.md). Requirements: [specification](SPECIFICATION.md). Delivery boundaries: [release readiness](release-readiness.md) and [known issues](known-issues.md).
 
 The sections below summarize **verified automated release gates** and **sanitized historical reference records** without publishing private transcripts, credentials, or raw machine dumps.
 
 ## Recorded automated verification gates (beta.2 baseline)
 
-The table below retains the beta.2 evidence baseline. On 2026-11-17, the subsequent audit-fix source passed 1,678 backend tests (one opt-in benchmark skipped by default), the explicit 100k usage test file (4 tests), 210 frontend tests across 12 files, 1,523 bilingual keys, and 29 script tests. Its build-3 App passed bundle/archive, six-host hook, data-lifecycle, and bilingual native checks. Beta.3 changes package metadata and requires its own rebuilt artifact checks; the exact release commit, native build number, checksums, and verification scope are recorded in its release attachments and notes. Earlier artifact evidence is not a substitute for that final artifact.
+Current Beta.4 automated results and install verification are maintained in [release readiness](release-readiness.md#beta4-verification). The table below retains the Beta.2 evidence baseline. On 2026-11-17, the subsequent audit-fix source passed 1,678 backend tests (one opt-in benchmark skipped by default), the explicit 100k usage test file (4 tests), 210 frontend tests across 12 files, 1,523 bilingual keys, and 29 script tests. Its build-3 App passed bundle/archive, six-host hook, data-lifecycle, and bilingual native checks. Beta.3 changes package metadata and requires its own rebuilt artifact checks; the exact release commit, native build number, checksums, and verification scope are recorded in its release attachments and notes. Earlier artifact evidence is not a substitute for that final artifact.
 
-| Verification gate | Scope & result | Boundary |
+| Historical verification gate (Beta.2) | Scope & result | Boundary |
 |---|---|---|
 | Backend suite (`pytest`) | 1,648 passed, 1 opt-in 100k benchmark (`SENRELAY_USAGE_PERF=1`) | Isolated synthetic fixtures and protocol/adapter tests (including dual-tier `working_tasks`, `read_conversation_messages` transcript paging, and Git worktree disambiguation); does not replace live external provider billing or OAuth sessions. |
 | Frontend workbench (`vitest`, `typecheck`, `lint`, `check:i18n`) | 205 tests passed (11 files), 0 type/lint errors, 1,518 Chinese/English keys verified | JSDOM/component and build checks; complements live browser inspection. |
