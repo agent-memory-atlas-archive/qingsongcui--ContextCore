@@ -2,7 +2,17 @@
 
 Requirements: [public specification](SPECIFICATION.md). Verification summary and historical observations: [evidence register](evidence.md). Operational commands: [application guide](../app/README.md).
 
-**Current source: `1.0.0-beta.3` Public Beta candidate (Apple Silicon `arm64`, macOS 14.0+, ad-hoc signed).** The 2026-11-17 audit-fix source baseline passed 1,678 backend tests (+ the explicit 100k benchmark file via `SENRELAY_USAGE_PERF=1`), 210 frontend Vitest tests, 1,523 bilingual UI keys, 29 `scripts/tests`, website checks, installed-wheel resource verification, native bundle/archive/hook/lifecycle/WKWebView checks, and repository security scanning. Exact final-candidate build/commit and artifact checks must be read from that release's receipts, not inferred from the source version. External account/OAuth/billing validation, live host reload across all surfaces, optional local semantic model downloads, and clean-Mac physical Gatekeeper/upgrade/reboot acceptance remain distinct boundaries documented below.
+**Public release: `1.0.0-beta.4` (macOS 14.0+ on Apple Silicon, ad-hoc signed).** The [release tag and asset receipts](https://github.com/qingsongcui/ContextCore/releases/tag/v1.0.0-beta.4) identify source commit `1f51e0b` and the published archive.
+
+## Beta.4 verification
+
+| Gate | Result |
+|---|---|
+| Backend default suite | 1,734 passed, 6 skipped |
+| Opt-in 100k usage benchmark | 1 passed in its own CI step |
+| Frontend | 236 Vitest tests passed across 15 files, with lint, types and 1,709 bilingual UI keys checked |
+
+The [Beta.4 release CI](https://github.com/qingsongcui/ContextCore/actions/runs/44494806670) is the source for these counts. The [product and website CI at `f50b7bd`](https://github.com/qingsongcui/ContextCore/actions/runs/44498449703) reported the same counts. The published release includes fresh first-launch and in-place Beta.3 upgrade checks with isolated Applications, HOME, and data. Physical clean-Mac Gatekeeper prompts, reboot behavior, external account/OAuth/billing and per-surface live host checks each require their own evidence.
 
 ## Approved Beta scope
 

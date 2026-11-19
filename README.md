@@ -2,11 +2,11 @@
 
 A native macOS app, browser workbench, and local background service that lets multiple AI coding assistants accumulate source-linked project memories, relay conversations across agents in a single command, and manage providers, MCP tools, Skills, and instructions in one place.
 
-[English](README.md) · [中文](README.zh-CN.md) · [Official Website](https://senrelay.com/) · [Setup Guide](https://senrelay.com/guide.html) · [15-Host Config Paths](https://senrelay.com/hosts.html) · [Cross-Agent Relay Workflow](https://senrelay.com/relay-workflow.html) · [5-Way Comparison](https://senrelay.com/compare.html) · [Public Beta Release (`v1.0.0-beta.3`)](https://github.com/qingsongcui/ContextCore/releases/tag/v1.0.0-beta.3)
+[English](README.md) · [中文](README.zh-CN.md) · [Official Website](https://senrelay.com/) · [Setup Guide](https://senrelay.com/guide.html) · [15-Host Config Paths](https://senrelay.com/hosts.html) · [Cross-Agent Relay Workflow](https://senrelay.com/relay-workflow.html) · [5-Way Comparison](https://senrelay.com/compare.html) · [Public Beta Release (`v1.0.0-beta.4`)](https://github.com/qingsongcui/ContextCore/releases/tag/v1.0.0-beta.4)
 
 > **100% Free & Open Source (`$0`, [MIT License](LICENSE)) · No Account Required · Apple Silicon `macOS 14.0+` (`arm64`) Local-First**
 >
-> **Disambiguation**: **Senrelay（续境）** (`qingsongcui/ContextCore`) is a local Apple Silicon macOS developer workbench. It is unrelated to third-party services at `context-core.dev`, public PyPI `pip install contextcore`, or hardware automotive relays. Install via `brew install --cask qingsongcui/tap/senrelay`.
+> **Disambiguation**: **Senrelay（续境）** (`qingsongcui/ContextCore`) is a local Apple Silicon macOS developer workbench. It is unrelated to third-party services at `context-core.dev`, public PyPI `pip install contextcore`, or hardware automotive relays.
 
 ## 42-Second Launch Film ("Turn 85")
 
@@ -28,7 +28,7 @@ The active product lives in `app/`. The [public specification](docs/SPECIFICATIO
 
 ## Desktop app, pricing, and when NOT to use
 
-The native macOS bundle ships a self-contained Python runtime (`1.0.0b3`), backend service, and frontend workbench; see [desktop build and verification](app/macos/README.md). Current public Beta candidates (`v1.0.0-beta.3`) target **Apple Silicon (`arm64`) on macOS 14.0+** and use ad-hoc signing (`Senrelay-macOS.zip` contains `Senrelay.app` only).
+The native macOS bundle ships a self-contained Python runtime, backend service (`1.0.0b4`), and frontend workbench; see [desktop build and verification](app/macos/README.md). Current public Beta candidates (`v1.0.0-beta.4`) target **Apple Silicon (`arm64`) on macOS 14.0+** and use ad-hoc signing (`Senrelay-macOS.zip` contains `Senrelay.app` only).
 
 - **Pricing & License**: **Free (`$0`, [MIT License](LICENSE))**, with no paid tiers, cloud account, or telemetry. You supply your own API keys stored locally in macOS Keychain.
 - **When NOT to use Senrelay**:
@@ -37,16 +37,9 @@ The native macOS bundle ships a self-contained Python runtime (`1.0.0b3`), backe
   3. You expect **cross-host session capture or `/contextcore` relay for the 9 extended config hosts** (`Claude Desktop`, `Gemini CLI`, `Grok Build`, `Kimi Code`, `MiniMax Code`, `Pi`, `Hermes`, `OpenClaw`, `agy`) — those 9 hosts only support previewed configuration management.
   4. You require a **zero-prompt Apple-notarized installer** — Public Beta builds are ad-hoc signed, so first launch requires running `xattr -cr /Applications/Senrelay.app` once.
 
-### Quick install via Homebrew Tap (macOS 14.0+ `arm64`)
+### Install Beta.4 from ZIP
 
-```bash
-brew install --cask qingsongcui/tap/senrelay
-xattr -cr /Applications/Senrelay.app
-```
-
-### Manual ZIP install
-
-1. Download `Senrelay-macOS.zip` from [`v1.0.0-beta.3`](https://github.com/qingsongcui/ContextCore/releases/tag/v1.0.0-beta.3), extract it, and move `Senrelay.app` to `/Applications`;
+1. Download `Senrelay-macOS.zip` from [`v1.0.0-beta.4`](https://github.com/qingsongcui/ContextCore/releases/tag/v1.0.0-beta.4), extract it, and move `Senrelay.app` to `/Applications`;
 2. Run `xattr -cr /Applications/Senrelay.app` in Terminal (or allow it under **System Settings → Privacy & Security → Open Anyway**; source checkouts also include `app/macos/install-macos.sh`).
 
 > **Package naming note**: The `contextcore` CLI ships inside `Senrelay.app` and this source repository (`qingsongcui/ContextCore`). Do **not** run `pip install contextcore` — the `contextcore` package on PyPI is an unrelated third-party project.
@@ -144,14 +137,8 @@ app/backend/.venv/bin/contextcore generate-plist --data-dir "$HOME/.contextcore/
 
 ## Verification gates and boundaries
 
-Automated verification gates currently pass across:
+The [Beta.4 verification record](docs/release-readiness.md#beta4-verification) links the release CI, current suite counts, and native clean-install and upgrade checks. The [evidence register](docs/evidence.md) documents historical host results and the scope of each check.
 
-- **Backend suite (`pytest`)**: 1,648 passed, 1 opt-in 100k usage benchmark (`SENRELAY_USAGE_PERF=1`);
-- **Frontend workbench (`typecheck`, `lint`, `vitest`, `check:i18n`)**: 205 Vitest tests passed across 11 files, 1,518 Chinese/English UI strings verified with zero unwrapped Chinese;
-- **Website checks**: Preview and `SITE_URL` deployment checks across bilingual `index.html`, `guide.html`, and `compare.html` (`check`, `check:brand`, `check:i18n`, `check:interactions`, `check:sphere`);
-- **Packaging, Native App & Security**: 29 `scripts/tests` security/version tests, installed non-editable wheel 11-resource verification (`check_release_readiness.py`), native `Senrelay.app` (`arm64`, `minos <= 14.0`, build 2) bundle/archive/lifecycle/WKWebView verification, 6-host isolated hook verification, and full working-tree + Git history security scans (`verify_repository_security.py`).
-
-See [release readiness](docs/release-readiness.md) and [evidence](docs/evidence.md) for detailed implementation mappings, historical reference records, and disclosed external boundaries (private GitHub auth, live account billing/OAuth eligibility, Apple notarization, and clean-Mac physical device acceptance).
 
 ## Security
 

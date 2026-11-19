@@ -277,7 +277,7 @@
       <div class="callout-title">先掌握三个配置事实</div>
       <div class="callout-list">
         <p><strong>键名与格式并不通用</strong>Claude Code 与 Cursor 用 JSON 里的 <code>mcpServers</code>，Codex 用 TOML 里的 <code>[mcp_servers.*]</code>，OpenCode 用 <code>opencode.json</code> 中的 <code>mcp</code>，而 OpenClaw 直接不支持原生 MCP 同步——不能拿软链接硬套。</p>
-        <p><strong>6 核 + 9 扩严格分层</strong>6 个核心宿主具备本地会话捕获与 <code>/contextcore</code> 全文接力；其余 9 个扩展宿主只提供带预览差异与回滚快照的配置管理，不夸大对接力能力的覆盖范围（见<a class="inline-link" href="./compare.html">5 种方案对比</a>）。</p>
+        <p><strong>6 核 + 9 扩严格分层</strong>6 个核心宿主可接入本地会话索引与 <code>/contextcore</code> 全文接力。实际验收进度见<a class="inline-link" href="./relay-workflow.html#relay-evidence">接力验证范围</a>；其余 9 个扩展宿主只提供带预览差异与回滚快照的配置管理，不夸大对接力能力的覆盖范围（见<a class="inline-link" href="./compare.html">5 种方案对比</a>）。</p>
         <p><strong>单机与密钥边界</strong>面向 Apple Silicon（<code>arm64</code>）macOS 14.0+，不支持 Windows 或 Linux。API Key 留在 macOS 系统钥匙串中，公开与导出配置时自动剔除密钥。</p>
       </div>
     </div>
@@ -510,7 +510,7 @@ curl -s http://127.0.0.1:8420/health</code></pre>
       <div class="callout-title">Three Key Rules First</div>
       <div class="callout-list">
         <p><strong>No Universal Schema or Key</strong>Claude Code and Cursor expect JSON <code>mcpServers</code>, Codex uses TOML <code>[mcp_servers.*]</code>, OpenCode nests under <code>mcp</code> inside <code>opencode.json</code>, and OpenClaw rejects native MCP writes altogether—making raw symlinks brittle.</p>
-        <p><strong>Strict 6-Core vs. 9-Extended Split</strong>Only the 6 core hosts index transcripts and support <code>/contextcore</code> session relay. The 9 extended hosts support previewed config translation and rollback snapshots only (see <a class="inline-link" href="./compare.html">the 5-way comparison</a>).</p>
+        <p><strong>Strict 6-Core vs. 9-Extended Split</strong>Six core hosts can connect to the transcript index and <code>/contextcore</code> relay. See <a class="inline-link" href="./relay-workflow.html#relay-evidence">relay verification by host</a>. The 9 extended hosts support previewed config translation and rollback snapshots only (see <a class="inline-link" href="./compare.html">the 5-way comparison</a>).</p>
         <p><strong>Apple Silicon Loopback &amp; Keychain</strong>Built strictly for Apple Silicon (<code>arm64</code>) macOS 14.0+—not Windows or Linux. API credentials remain in macOS Keychain and are stripped automatically from exports.</p>
       </div>
     </div>
