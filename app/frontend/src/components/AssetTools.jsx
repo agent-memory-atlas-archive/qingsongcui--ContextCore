@@ -1,9 +1,9 @@
 import { useRef, useState } from 'react';
-import { History, Search, ShieldCheck } from 'lucide-react';
+import { History, ShieldCheck } from 'lucide-react';
 import { t } from '../lib/i18n.jsx';
 import { mutate } from '../lib/api.js';
 import { useResource } from '../lib/useResource.js';
-import { list, safeEvidence } from '../lib/management.js';
+import { list, safeEvidence, mcpNeedsReview } from '../lib/management.js';
 import { Button, ErrorNotice, Field, Modal, ResourceState } from './ui.jsx';
 import { DataTable, EvidenceDetails, Facts, StatusBadge } from './ManagementUI.jsx';
 import { ResourcePagination } from './agent-management/ResourcePagination.jsx';
@@ -27,10 +27,11 @@ export function AssetTools({ item, onChanged, selectedAgent, isCurrent = () => t
   const versions = useResource(mode === 'versions' ? `/api/manage/assets/${encodeURIComponent(item.id)}/versions?summary=true&limit=20&offset=${versionOffset}` : null);
   const revision = useResource(mode === 'versions' && selected && !selected.data ? `/api/manage/assets/${encodeURIComponent(item.id)}/versions/${selected.version}` : null);
   const prior = selected?.data ? selected : revision.data;
+  const blockedProbe = mode === 'probe' && (mcpNeedsReview(item) || mcpNeedsReview(full));
   const canRestore = selected && prior?.version === selected.version && prior.data?.kind === item.kind && !revision.loading && !revision.error && selected.version !== full?.version;
   function open(value) { setMode(value); setSelected(null); setVersionOffset(0); setResult(null); setError(null); }
   async function run() {
-    if (lock.current || !isCurrent() || !full || detail.loading || detailError || !detailMatches || (mode === 'versions' && !canRestore)) return;
+    if (lock.current || !isCurrent() || !full || detail.loading || detailError || !detailMatches || blockedProbe || (mode === 'versions' && !canRestore)) return;
     lock.current = true; setBusy(true); setError(null);
     try {
       const body = mode === 'probe' ? { confirmed: true, expected_version: full.version } : { version: selected.version, expected_version: full.version };
@@ -41,10 +42,11 @@ export function AssetTools({ item, onChanged, selectedAgent, isCurrent = () => t
   const title = mode === 'probe' ? t('验证工具发现') : t('版本与恢复');
   const probeFacts = [[t('名称'), full?.name], [t('程序名称或路径'), full?.config?.command], [t('启动参数'), (full?.config?.args || []).join(' ')], [t('服务网址'), full?.config?.url]].map(([label, value]) => [label, safeEvidence(value)]);
   return <>
-    <div className="toolbar-actions"><Button icon={History} onClick={() => open('versions')}>{t('版本与恢复')}</Button>{item.kind === 'mcp' ? <Button icon={ShieldCheck} onClick={() => open('probe')}>{t('验证工具发现')}</Button> : null}</div>
+    <div className="toolbar-actions"><Button icon={History} onClick={() => open('versions')}>{t('版本与恢复')}</Button>{item.kind === 'mcp' ? <Button icon={ShieldCheck} disabled={mcpNeedsReview(item)} title={mcpNeedsReview(item) ? t('请先核对工具定义') : undefined} onClick={() => open('probe')}>{t('验证工具发现')}</Button> : null}</div>
     {mode ? <Modal wide title={`${selectedAgent ? `${selectedAgent} · ` : ''}${item.name} · ${title}`} busy={busy} onClose={() => setMode(null)}>
       {mode === 'probe' ? <>
         <p className="modal-copy">{t('确认后将连接 HTTP / SSE 服务，或启动下方 command / args 指定的本地进程，完成 MCP 初始化并读取工具清单。不会执行工具；工具发现与宿主加载分别验证。')}</p>
+        {blockedProbe && <p role="status">{t('请先核对工具定义')}</p>}
         <ResourceState resource={detail}><Facts values={probeFacts} /><EvidenceDetails value={{ name: full?.name, config: full?.config }} title={t('将连接的配置')} /></ResourceState>
       </> : <>
         <p className="modal-copy">{t('选择旧版以检查恢复差异。恢复只更新资产定义，宿主文件仍需新的应用计划。')}</p>
@@ -54,22 +56,7 @@ export function AssetTools({ item, onChanged, selectedAgent, isCurrent = () => t
       </>}
       {result ? <><StatusBadge value={result.status || 'configured'} /><EvidenceDetails value={result} title={t('操作回读结果')} /></> : null}
       <ErrorNotice error={error || detailError || revision.error} />
-      <footer className="modal-actions"><Button onClick={() => setMode(null)}>{t('关闭')}</Button><Button variant="primary" busy={busy} disabled={!!result || !full || detail.loading || Boolean(detailError) || !detailMatches || (mode === 'versions' && !canRestore)} onClick={run}>{mode === 'probe' ? t('确认连接并发现工具') : t('确认恢复此版本')}</Button></footer>
+      <footer className="modal-actions"><Button onClick={() => setMode(null)}>{t('关闭')}</Button><Button variant="primary" busy={busy} disabled={!!result || !full || detail.loading || Boolean(detailError) || !detailMatches || blockedProbe || (mode === 'versions' && !canRestore)} onClick={run}>{mode === 'probe' ? t('确认连接并发现工具') : t('确认恢复此版本')}</Button></footer>
     </Modal> : null}
   </>;
-}
-
-export function AssetDiscovery({ host, onImport, isCurrent = () => true }) {
-  const [open, setOpen] = useState(false);
-  const [data, setData] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState(null);
-  const lock = useRef(false);
-  async function discover() {
-    if (lock.current || !host || !isCurrent()) return;
-    lock.current = true; setBusy(true); setError(null);
-    try { const output = await mutate('/api/manage/assets/discover', 'POST', { host_id: host.id }); if (isCurrent()) setData(output); }
-    catch (failure) { if (isCurrent()) setError(failure); } finally { lock.current = false; setBusy(false); }
-  }
-  return <><Button icon={Search} disabled={!host} onClick={() => { setOpen(true); setData(null); setError(null); }}>{t('读取已有工具配置')}</Button>{open ? <Modal wide title={`${host?.name || ''} · ${t('读取已有工具配置')}`} busy={busy} onClose={() => setOpen(false)}><p className="modal-copy">{t('只读取所选宿主配置的 MCP 元数据。敏感参数会省略，导入前需要补全并检查；不会读取聊天记录。')}</p><Facts values={[[t('目标宿主'), host?.name], [t('读取范围'), host?.paths?.mcp_path]]} />{data ? <><StatusBadge value={data.status} />{(data.candidates || []).map(candidate => <article className="management-card" key={candidate.name}><h3>{candidate.name}</h3><EvidenceDetails value={candidate} /><Button onClick={() => { if (!isCurrent()) return; setOpen(false); onImport(candidate); }}>{t('检查并导入定义')}</Button></article>)}<EvidenceDetails value={data} title={t('发现结果与省略字段')} /></> : null}<ErrorNotice error={error} /><footer className="modal-actions"><Button onClick={() => setOpen(false)}>{t('关闭')}</Button><Button busy={busy} disabled={!!data} variant="primary" onClick={discover}>{t('确认读取此配置')}</Button></footer></Modal> : null}</>;
 }

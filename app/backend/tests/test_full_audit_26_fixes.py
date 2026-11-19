@@ -30,7 +30,6 @@ from app.services import (
     conversation_service,
     handoff_page_service,
     handoff_service,
-    migration_service,
     project_service,
     retrieval_service,
     usage_service,
@@ -550,38 +549,6 @@ def test_4_3_resolve_conflict_preserves_existing_quote_and_avoids_ambiguous_matc
     assert not any(s["quote"] == "shared-ambiguous-phrase" for s in after_sources)
 
 
-def test_4_4_migration_plan_replan_resets_failed_status(tmp_path: Path) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    src = tmp_path / "cc-switch.json"
-    src.write_text(json.dumps({
-        "version": 2,
-        "claude": {
-            "providers": {
-                "p1": {
-                    "name": "ReplanProvider",
-                    "settingsConfig": {"env": {"ANTHROPIC_BASE_URL": "https://api.example.test"}},
-                }
-            }
-        },
-    }))
-    manager = ManagementService(tmp_path / "mgmt.sqlite", home, _FakeVault())
-    svc = migration_service.MigrationService(manager)
-    plan1 = svc.plan({"source_path": str(src)})
-    with manager.connect() as conn:
-        conn.execute("UPDATE management_migrations SET status = 'failed' WHERE id = ?", (plan1["id"],))
-        conn.commit()
-    with pytest.raises(ConfigurationError) as exc_info:
-        svc.apply(plan1["id"], confirmed=True)
-    assert exc_info.value.status_code == 409
-
-    plan2 = svc.plan({"source_path": str(src)})
-    assert plan2["id"] == plan1["id"]
-    assert plan2["status"] == "planned"
-    applied = svc.apply(plan2["id"], confirmed=True)
-    assert applied["status"] == "applied"
-
-
 def test_4_5_blackhole_repair_persists_origin_marker_for_retry(tmp_path: Path, monkeypatch) -> None:
     create_schema()
     fake_home = (tmp_path / "user-home").resolve()
@@ -733,6 +700,13 @@ def test_6_2_and_6_3_release_resources_and_wheel_exact_member_check(tmp_path: Pa
             zf.write(path, path.relative_to(backend_copy).as_posix())
     with zipfile.ZipFile(good_whl) as zf:
         check_release_readiness.verify_wheel_members_match_source(zf, backend_copy, release_resources.RESOURCE_FILES)
+
+    # Stale local setuptools build products must never be reintroduced.
+    with zipfile.ZipFile(good_whl, "a") as zf:
+        zf.writestr("app/services/retired_feature.py", b"# old source")
+    with zipfile.ZipFile(good_whl) as zf:
+        with pytest.raises(AssertionError, match="Unexpected app files"):
+            check_release_readiness.verify_wheel_members_match_source(zf, backend_copy, release_resources.RESOURCE_FILES)
 
     # Suffix-only spoofed path must fail
     bad_suffix_whl = tmp_path / "bad_suffix.whl"

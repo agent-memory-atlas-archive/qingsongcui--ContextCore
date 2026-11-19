@@ -59,8 +59,8 @@ Developer ID signing, Apple notarization, clean-Mac physical Gatekeeper acceptan
 
 - **Primary Left Navigation (3 fixed entries + conditional conflict badge)**:
   - **Projects** (`projects`): Top global search bar across projects, plus four focused project tabs: `Overview`, `Chats`, `Memory` (including tasks/todos and 📌 pinned rules), and `Materials`.
-  - **Agent Management** (`agents`): Permanent top host switcher bar for One-Click Connect, providers & models, MCP tools, Skills, system prompts, and routing modes.
-  - **Usage & Performance** (`usage`): Recorded requests, token consumption, latency, and cost estimates, with unobserved metrics marked unknown rather than `0`.
+  - **Agent Management** (`agents`): Choose an assistant, add a provider or preview its native configuration. Switch models, manage shared resources, undo changes and restore Senrelay configuration backups.
+  - **Usage & Performance** (`usage`): Review usage and estimated costs for the selected period. Open a logical request to inspect its provider attempts and failures. Refresh supported account quotas separately.
   - **Needs Decision** (`conflicts`, shown on demand): Appears in primary navigation with a count badge only when memory conflicts are pending.
 - **Compact Sidebar Footer**: Live local service indicator, **Settings** (`settings`, containing appearance, language, LaunchAgent autostart, SQLite online backup, optional semantic search settings, and the embedded **Change Log** viewer), bilingual toggle (`中 / EN`), and theme switcher.
 

@@ -49,7 +49,6 @@ export function t(key, vars) {
 function applyDocument() {
   if (typeof document === 'undefined') return;
   document.documentElement.lang = lang === 'en' ? 'en' : 'zh-CN';
-  document.title = t('Senrelay · 续境 — 项目工作台');
 }
 
 export function setLang(next) {

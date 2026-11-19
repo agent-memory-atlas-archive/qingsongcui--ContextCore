@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { t } from '../../lib/i18n.jsx';
+import { t, locale } from '../../lib/i18n.jsx';
 import { mutate, request } from '../../lib/api.js';
 import { useResource } from '../../lib/useResource.js';
 import { Button, ErrorNotice, Field, Modal, ResourceState } from '../ui.jsx';
@@ -17,6 +17,29 @@ function initialDraft(mode, state) {
     ...(mode === 'routing' ? { target: entry(current ? state.target : null), fallbacks: current ? (state.fallbacks || []).map(entry) : [] } : { members: current ? (state.members || []).map(row => ({ ...entry(row), alias: row.alias })) : [{ ...entry(), alias: 'everyday' }], default_alias: current ? state.default_alias : 'everyday' }) };
 }
 
+function localTime(value) {
+  if (!value) return '';
+  const date = new Date(typeof value === 'number' && value < 1e12 ? value * 1000 : value);
+  return Number.isFinite(date.getTime()) ? date.toLocaleString(locale()) : '';
+}
+
+function NativeAliasSelection({ hostId, state }) {
+  const [choice, setChoice] = useState('');
+  const commands = { codex: 'codex', 'claude-code': 'claude', opencode: 'opencode' };
+  const aliases = (state.members || []).map(member => member.alias);
+  if (!commands[hostId] || state.mode !== 'aggregation' || !aliases.length) return null;
+  const alias = aliases.includes(choice) ? choice : state.default_alias || aliases[0];
+  const model = hostId === 'opencode' ? 'gateway_opencode/' + alias : alias;
+  const quoted = "'" + model.replaceAll("'", "'\\''") + "'";
+  return <details className="agent-advanced">
+    <summary>{t('在助手中选择聚合模型')}</summary>
+    <Field label={t('已配置的模型别名')}><select value={alias} onChange={event => setChoice(event.target.value)}>
+      {aliases.map(value => <option key={value} value={value}>{value}</option>)}
+    </select></Field>
+    <p><code>{commands[hostId]} --model {quoted}</code></p>
+  </details>;
+}
+
 function RouteChoice({ value, label, onChange, agentId, revision }) {
   return <fieldset className="agent-route-choice"><legend>{label}</legend>
     <CatalogChoice collection="providers" label={t('服务商')} value={value.provider_id} agentId={agentId} scope="all" revision={revision} allowNone={false} onChange={provider_id => onChange({ ...value, provider_id, model_id: '' })} />
@@ -24,7 +47,7 @@ function RouteChoice({ value, label, onChange, agentId, revision }) {
   </fieldset>;
 }
 
-export function AssistantConnectionModes({ agentId, agent, revision, onChanged, busy: externalBusy, onBusyChange, drafts }) {
+export function AssistantConnectionModes({ agentId, agent, revision, onChanged, busy: externalBusy, onBusyChange, onRequest, drafts }) {
   const resource = useResource(`/api/manage/hosts/${encodeURIComponent(agentId)}/mode`, revision);
   const state = resource.data;
   const [view, setView] = useState(null);
@@ -118,6 +141,8 @@ export function AssistantConnectionModes({ agentId, agent, revision, onChanged, 
     return rows.length > 0 && rows.every(row => row.provider_id && row.model_id && (mode !== 'aggregation' || row.alias?.trim())) && (mode !== 'aggregation' || value.members.some(row => row.alias === value.default_alias));
   }
   const effect = plan?.payload?.metadata?.connection_change;
+  const defaultMember = state?.members?.find(member => member.alias === state.default_alias);
+  const summaryTarget = state?.mode === 'routing' ? state.target : defaultMember;
   return <section className="management-panel agent-connection-modes" aria-label={t('连接方式')}>
     <div className="cc-software-row">
       <div className="cc-software-row-main">
@@ -126,8 +151,10 @@ export function AssistantConnectionModes({ agentId, agent, revision, onChanged, 
         {state?.definition_state === 'update_available' ? <span className="badge warning" role="status">{t('使用中的定义已更新；重新预览应用后才恢复转发。')}</span> : null}
       </div>
       {state ? <div className="toolbar-actions cc-software-row-actions">
+        {state.mode !== 'direct' && !view ? <Button disabled={disabled} onClick={() => selectMode(state.mode)}>{t('编辑线路')}</Button> : null}
+        {view && view !== 'direct' ? <Button disabled={disabled} onClick={() => { setView(null); setDraft(null); }}>{t('收起编辑')}</Button> : null}
         {mode === 'direct' && state.mode !== 'direct' ? <Button disabled={disabled || !!state.pending} onClick={returnDirect}>{t('预览返回直连')}</Button> : null}
-        <nav className="agent-categories cc-mode-segmented" aria-label={t('查看连接方式')}>{modes.map(([id, label]) => <Button key={id} variant={mode === id ? 'primary' : 'secondary'} disabled={disabled} aria-pressed={mode === id} onClick={() => selectMode(id)}>{t(label)}</Button>)}</nav>
+        <nav className="agent-categories cc-mode-segmented" aria-label={t('查看连接方式')}>{modes.map(([id, label]) => <Button key={id} title={id !== 'direct' && !state.supported ? t('此助手仅支持原生连接方式') : undefined} variant={mode === id ? 'primary' : 'secondary'} disabled={disabled || (id !== 'direct' && !state.supported)} aria-pressed={mode === id} onClick={() => selectMode(id)}>{t(label)}</Button>)}</nav>
       </div> : null}
     </div>
     <div className="cc-sr-prose">
@@ -136,8 +163,20 @@ export function AssistantConnectionModes({ agentId, agent, revision, onChanged, 
       {state && mode === 'direct' ? <p>{t('在下方选择并启用模型，助手将直接连接服务商。浏览这个选项不会切换连接。')}</p> : null}
     </div>
     <ResourceState resource={resource}>{state ? <>
+      {state.mode !== 'direct' && !view ? <div className="agent-route-observations">
+        {summaryTarget ? <div><strong>{state.mode === 'aggregation' ? t('默认模型') : t('常用服务与模型')}</strong><span>{[summaryTarget.alias, summaryTarget.provider_name, summaryTarget.native_model].filter(Boolean).join(' · ')}</span></div> : null}
+        {state.mode === 'routing' && state.fallbacks?.length ? <div><strong>{t('允许使用的备用服务')}</strong><span>{state.fallbacks.map(entry => entry.provider_name || entry.native_model).join(' → ')}</span></div> : null}
+      </div> : null}
+      {state.mode !== 'direct' && state.diagnostics ? <div className="agent-route-observations">
+        {[[t('最近成功请求'), state.diagnostics.last_success], [t('最近失败请求'), state.diagnostics.last_failure]].map(([label, attempt]) => <div key={label}>
+          <strong>{label}</strong><span>{attempt ? [attempt.provider_name, attempt.model, attempt.error_code, attempt.ended_at ? localTime(attempt.ended_at) : null].filter(Boolean).join(' · ') : t('尚未观测到')}</span>
+          {attempt?.logical_request_id && onRequest ? <Button onClick={() => onRequest(attempt.logical_request_id)}>{t('查看请求')}</Button> : null}
+        </div>)}
+        {Object.entries(state.diagnostics.circuits || {}).filter(([, circuit]) => circuit.state !== 'closed').map(([id, circuit]) => <div key={id}><strong>{[(state.target || {}), ...(state.fallbacks || []), ...(state.members || [])].find(item => item.provider_id === id)?.provider_name || id}</strong><span>{circuit.state === 'open' ? t('线路已暂停') : t('等待探测结果')}{circuit.open_until ? ' · ' + localTime(circuit.open_until) : ''}</span></div>)}
+      </div> : null}
+      <NativeAliasSelection hostId={agentId} state={state} />
       {state.pending ? <div className="agent-draft-notice"><p>{t('有未完成的连接更改。转发已暂停，请先检查并恢复。')}</p><Button disabled={disabled} onClick={() => setRecover(true)}>{t('检查连接恢复')}</Button></div> : null}
-      {mode === 'direct' ? null : !state.supported ? <p className="management-card-note">{t('这个助手尚不支持由续境设置本地转发，请使用它已支持的直连方式。')}</p> : <form className="management-form agent-form cc-mode-drawer" onSubmit={event => { event.preventDefault(); preview(); }}>
+      {!view || mode === 'direct' ? null : !state.supported ? <p className="management-card-note">{t('这个助手尚不支持由续境设置本地转发，请使用它已支持的直连方式。')}</p> : <form className="management-form agent-form cc-mode-drawer" onSubmit={event => { event.preventDefault(); preview(); }}>
         <div className="cc-sr-prose">
           <p>{mode === 'routing' ? t('选择常用模型，再按顺序添加你允许使用的备用服务。只在连接未建立或收到限流拒绝时尝试下一项；结果未知时不会重发。') : t('给模型起一个好记的名字。助手选择哪个名字，就发给对应服务商；聚合不会自动使用备用服务。')}</p>
           <p>{t('本机服务需要保持运行。这个转发连接使用独立凭据，服务商密钥由本机服务读取。')}</p>

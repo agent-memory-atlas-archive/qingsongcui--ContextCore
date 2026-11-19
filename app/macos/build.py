@@ -105,7 +105,7 @@ resources = contents / 'Resources'
 (contents / 'MacOS').mkdir(parents=True)
 resources.mkdir()
 shutil.copytree(build / 'frozen/senrelay-service', resources / 'service')
-run('xcrun', 'swiftc', '-O', '-module-cache-path', build / 'swift-cache', '-target', f'{__import__("platform").machine()}-apple-macosx{minimum_macos}', '-framework', 'Cocoa', '-framework', 'WebKit', here / 'Senrelay.swift', '-o', contents / 'MacOS/Senrelay')
+run('xcrun', 'swiftc', '-O', '-module-cache-path', build / 'swift-cache', '-target', f'{__import__("platform").machine()}-apple-macosx{minimum_macos}', '-framework', 'Cocoa', '-framework', 'WebKit', here / 'Senrelay.swift', here / 'WorkbenchShortcuts.swift', '-o', contents / 'MacOS/Senrelay')
 icons = build / 'AppIcon.iconset'; icons.mkdir(exist_ok=True)
 icon_source = frontend / 'app-icon.png'
 if not icon_source.exists(): icon_source = frontend / 'senrelay-logo-original-v1.png'

@@ -156,7 +156,7 @@ describe('Agent-scoped uncertainty and failed drafts', () => {
     expect(document.querySelector('h1').textContent).toBe('Agent 管理'); expect(h.mutate).not.toHaveBeenCalled();
     await act(async () => { [...document.querySelectorAll('.agent-choice')].find(node => node.textContent.includes('Oh My Pi')).click(); });
     expect(document.querySelector('h1').textContent).toBe('Oh My Pi (OMP)');
-    expect(h.mutate).not.toHaveBeenCalled();
+    expect(h.mutate).toHaveBeenCalledExactlyOnceWith('/api/manage/agent-preferences', 'POST', { host_id: 'omp', action: 'visit' });
   });
 
   it('discards late previews after changing Agent and never carries a prior confirmation', async () => {
@@ -282,6 +282,8 @@ describe('new native management consumers', () => {
     planned.payload.metadata.model_selection = { provider_name: value.name, native_model: 'native-model' };
     h.mutate.mockResolvedValueOnce(planned);
     const name = id === 'omp' ? 'Oh My Pi (OMP)' : id;
+    expect(button(`预览应用到 ${name}`, dialog()).disabled).toBe(true);
+    await change(field('请求模型', dialog()), 'friendly');
     await click(`预览应用到 ${name}`, dialog());
     expect(h.mutate).toHaveBeenCalledExactlyOnceWith('/api/manage/plans', 'POST', { host_id: id, operation: 'install', asset_ids: [], provider_id: value.id, activate_provider: true, model_id: 'friendly' });
     expect(dialog().textContent).toContain('宿主是否采用仍需核验');

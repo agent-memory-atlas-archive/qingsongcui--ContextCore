@@ -125,7 +125,7 @@ jobs:
           npm ci --registry=https://registry.npmjs.org
           npm run build
       - name: Build distributable backend wheel
-        run: uv build --wheel --out-dir dist/wheels app/backend
+        run: uv build --out-dir dist/wheels app/backend
       - name: Isolate packaging smoke HOME and data
         run: |
           mkdir -p "$RUNNER_TEMP/contextcore-package-home" "$RUNNER_TEMP/contextcore-package-data"
@@ -141,6 +141,8 @@ jobs:
           from pathlib import Path, PurePosixPath
           sys.path.insert(0, 'app/scripts')
           from release_versions import release_versions
+          from check_release_readiness import verify_wheel_members_match_source
+          from app.release_resources import RESOURCE_FILES
           spec = importlib.util.spec_from_file_location("security", "scripts/verify_repository_security.py")
           security = importlib.util.module_from_spec(spec)
           spec.loader.exec_module(security)
@@ -157,6 +159,7 @@ jobs:
               if len(content) > security.MAX_SOURCE_BYTES or security.content_findings(content, relative):
                   raise SystemExit("Oversized or potential credential-bearing artifact; candidate blocked")
           with zipfile.ZipFile(wheels[0]) as wheel:
+              verify_wheel_members_match_source(wheel, Path("app/backend"), RESOURCE_FILES)
               names = wheel.namelist()
               if len(names) != len(set(names)):
                   raise SystemExit("Duplicate wheel members")

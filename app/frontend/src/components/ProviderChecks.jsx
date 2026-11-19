@@ -6,7 +6,7 @@ import { list } from '../lib/management.js';
 import { Button, ErrorNotice, Field, Modal, ResourceState } from './ui.jsx';
 import { DataTable, EvidenceDetails, StatusBadge } from './ManagementUI.jsx';
 
-export function ProviderChecks({ provider, contextTitle }) {
+export function ProviderChecks({ provider, contextTitle, compact = false }) {
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState('network');
   const [model, setModel] = useState('');
@@ -53,7 +53,7 @@ export function ProviderChecks({ provider, contextTitle }) {
       setBusy(false);
     }
   }
-  return <><Button disabled={busy || !supported} onClick={quickSpeedtest}>{t('一键测速')}</Button>{quickLatency ? <span className="cc-latency-pill" role="status">{quickLatency}</span> : null}<Button onClick={() => { setOpen(true); setResult(null); setError(null); setAttempted(false); setPaid(false); }}>{t('目录与独立检查')}</Button>{open ? <Modal wide title={`${contextTitle ? `${contextTitle} · ` : ''}${t('目录与独立检查')}`} busy={busy} onClose={() => setOpen(false)}><div className="management-form">
+  return <>{!compact ? <Button disabled={busy || !supported} onClick={quickSpeedtest}>{t('一键测速')}</Button> : null}{quickLatency ? <span className="cc-latency-pill" role="status">{quickLatency}</span> : null}<Button onClick={() => { setOpen(true); setResult(null); setError(null); setAttempted(false); setPaid(false); }}>{compact ? t('检查连接') : t('目录与独立检查')}</Button>{open ? <Modal wide title={`${contextTitle ? `${contextTitle} · ` : ''}${t('目录与独立检查')}`} busy={busy} onClose={() => setOpen(false)}><div className="management-form">
     <h3>{provider.name}</h3><p>{t('检查针对这个共享服务定义，不会应用或切换任何助手配置。')}</p>
     <p>{t('打开页面只读本机目录缓存。刷新目录会访问供应商；网络可达、认证、模型推理各自独立，不能互相替代。')}</p>
     {!supported ? <p>{t('这个协议暂不支持读取模型目录，请填写服务商文档中的准确模型名。不会自动发起检查或推理。')}</p> : null}

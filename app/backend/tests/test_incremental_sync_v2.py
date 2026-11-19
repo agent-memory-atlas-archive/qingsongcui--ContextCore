@@ -242,13 +242,17 @@ def test_codex_native_cumulative_usage_is_ingested_once_on_reconcile(isolated):
     service.sync_connection('codex', force=False); service.sync_connection('codex', force=True)
     from app.services import usage_service
     report = usage_service.summary({'host_id': 'codex'})
-    assert report['input_tokens'] == 180 and report['output_tokens'] == 20 and report['attempts'] == 2
+    assert report['input_tokens'] == 180 and report['output_tokens'] == 20
+    assert report['logical_requests'] == report['attempts'] == 0
+    assert report['unattributed_samples'] == 2
     with db() as conn:
         assert 'DO_NOT_LEDGER' not in ''.join(r[0] for r in conn.execute('SELECT data FROM usage_v2_observations'))
     rows.append({'type': 'event_msg', 'timestamp': '2026-10-24T01:00:04Z', 'payload': {'type': 'token_count', 'info': {'total_token_usage': {'input_tokens': 200, 'output_tokens': 25}}}})
     source.write_text(''.join(json.dumps(r) + '\n' for r in rows)); service.sync_connection('codex', force=False)
     report = usage_service.summary({'host_id': 'codex'})
     assert report['input_tokens'] == 200 and report['output_tokens'] == 25
+    assert report['logical_requests'] == report['attempts'] == 0
+    assert report['unattributed_samples'] == 3
 
 
 def test_claude_native_usage_retains_anthropic_cache_semantics(isolated):

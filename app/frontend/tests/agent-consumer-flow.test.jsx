@@ -35,6 +35,42 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); });
 
 describe('ordinary assistant configuration forms', () => {
+  it('shows the active custom root, keeps native management available and scopes integration installation', async () => {
+    h.data['/api/manage/hosts'] = [{ ...host, shared_configuration: false,
+      config_root: { variable: 'CODEX_HOME', path: '/home/test/work-codex', status: 'custom' } }];
+    await mount();
+    expect(container.querySelector('.agent-config-root').textContent).toContain('/home/test/work-codex');
+    expect(button('读取原生配置').disabled).toBe(false);
+    expect(button('一键接入续境').disabled).toBe(true);
+    await mount('bundles');
+    expect(container.textContent).toContain('方案按助手应用到各自的用户级配置文件。');
+    expect(container.textContent).not.toContain('Codex CLI 和桌面版共用原生配置。');
+  });
+  it.each([['codex', 'cli'], ['codex-desktop', 'desktop']])('uses the selected %s surface for installation and removal', async (agentId, surface) => {
+    const cli = agentId === 'codex' ? host : { ...host, config_root: { variable: 'CODEX_HOME', path: '/home/test/custom', status: 'custom' } };
+    h.data['/api/manage/hosts'] = [cli, { ...host, id: 'codex-desktop', name: 'Codex Desktop', registry_host_id: 'codex', shared_configuration: false }];
+    h.data['/api/connections'] = [{ id: 'codex', enabled: true }];
+    h.mutate.mockResolvedValue({ ok: true });
+    await act(async () => { root.render(<AgentManagementPage agentId={agentId} section="providers" onAgentChange={() => {}} projects={[]} revision={0} onChanged={() => {}} />); });
+    await click('一键接入续境');
+    expect(h.mutate).toHaveBeenCalledWith('/api/connections/codex/one-click-connect', 'POST', { surface });
+    await click('断开接入');
+    expect(h.mutate).toHaveBeenCalledWith('/api/connections/codex/one-click-disconnect', 'POST', { surface });
+  });
+  it('preserves definition editing and blocks native operations while the root needs recovery', async () => {
+    h.data['/api/manage/hosts'] = [{ ...host, config_root: { variable: 'CODEX_HOME',
+      path: '/home/test/new-root', previous_path: '/home/test/old-root', reason: 'previous_root', status: 'blocked' } }];
+    await mount();
+    expect(container.querySelector('.agent-config-root').textContent).toContain('/home/test/old-root');
+    expect(button('读取原生配置').disabled).toBe(true);
+    expect(button('一键切换').disabled).toBe(true);
+    expect(button('预览恢复原模型选择').disabled).toBe(true);
+    expect(h.paths).not.toContain('/api/manage/hosts/codex/state');
+    await click('添加服务商');
+    expect(dialog().textContent).toContain('此处可保存服务地址、密钥和模型。');
+    expect(h.mutate).not.toHaveBeenCalled();
+  });
+
   it('shows a repair action for an unproven legacy model selection without choosing an account or model automatically', async () => {
     h.data['/api/manage/hosts/codex/state'] = { selection: { status: 'not_checked', receipt_unknown: true }, resources: {}, coverage: 'complete_owned_entries' };
     await mount();
@@ -416,6 +452,8 @@ describe('per-assistant connection modes', () => {
   it('pages aggregation editors and preserves aliases outside the visible page', async () => {
     h.data['/api/manage/hosts/codex/mode'] = { ...state, mode: 'aggregation', endpoint: 'responses', default_alias: 'fixture-0', members: Array.from({ length: 21 }, (_, i) => ({ ...model, provider_id: provider.id, model_id: model.id, alias: `fixture-${i}` })) };
     await modes();
+    expect(container.querySelector('.agent-aggregation')).toBeNull();
+    await click('编辑线路');
     expect(container.querySelectorAll('.agent-aggregation .agent-route-row')).toHaveLength(10);
     await click('下一页', container.querySelector('[aria-label="聚合模型分页"]'));
     await change(field('模型显示名称 11', container), 'edited-on-next-page');
@@ -522,6 +560,24 @@ describe('consumer frontend fixes for account, draft and dialog regressions', ()
 });
 
 describe('assistant resource organization', () => {
+  it('offers in-place takeover only for manageable native entries and blocks duplicate installs', async () => {
+    const native = ['available', 'read_only', 'source_changed'].map(name => ({
+      id: 'asset_' + name, name, agent_ids: ['codex'], kind: 'mcp', version: 1, config: { command: 'tool' },
+    }));
+    h.data['/api/manage/assets'] = native;
+    h.data['/api/manage/hosts/codex/state'] = { host_id: 'codex', selection: {}, resources:
+      Object.fromEntries(native.map(item => [item.id, { paths: 0, status: 'native_' + item.name }])) };
+    await mount('mcp');
+    const cards = [...container.querySelectorAll('.management-card')];
+    const card = name => cards.find(item => item.querySelector('h3')?.textContent === name);
+    expect(button('预览原位接管', card('available')).disabled).toBe(false);
+    for (const name of ['read_only', 'source_changed']) {
+      expect(button('由宿主管理', card(name)).disabled).toBe(true);
+      expect(button('预览应用到 Codex CLI', card(name)).disabled).toBe(true);
+    }
+    expect(h.mutate).not.toHaveBeenCalled();
+  });
+
   it('does not show other or legacy shared resources until explicitly requested; selection uses CAS without applying', async () => {
     const shared = { ...provider, id: 'shared', name: 'Shared only', agent_ids: ['omp'], version: 7 };
     const legacy = { ...provider, id: 'legacy', name: 'Legacy library', agent_ids: undefined };
@@ -986,7 +1042,7 @@ it('returns to a valid resource page after the final page is emptied by another 
 it('keeps a single primary heading when connection permissions are embedded in an assistant', async () => {
   await mount('connections');
   expect(document.querySelectorAll('h1')).toHaveLength(1);
-  expect(document.querySelector('h1').textContent).toBe('Codex CLI');
+  expect(document.querySelector('h1').textContent).toBe('Codex');
   expect(document.querySelectorAll('.page-header h2')).toHaveLength(1);
   expect(document.body.textContent).toContain('各自独立确认');
 });
@@ -1037,10 +1093,13 @@ describe('Agent management parity controls', () => {
     // 1. Top segmented host switcher bar
     const switcher = container.querySelector('.cc-top-switcher-bar');
     expect(switcher).toBeTruthy();
-    expect(switcher.textContent).toContain('Codex CLI');
+    expect(button('Codex', switcher)).toBeTruthy();
     expect(switcher.textContent).toContain('Claude Code');
     await click('Claude Code', switcher);
     expect(onAgentChange).toHaveBeenCalledWith('claude-code', 'providers');
+
+    expect(h.mutate).toHaveBeenCalledWith('/api/manage/agent-preferences', 'POST', { host_id: 'claude-code', action: 'visit' });
+    h.mutate.mockClear();
 
     // 2. Environment variable conflict alert in ConfigurationState
     const envAlert = container.querySelector('.cc-env-conflict-alert');
@@ -1051,7 +1110,9 @@ describe('Agent management parity controls', () => {
     // 3. Active badge on provider_fixture ("正在使用") and "一键切换" on secondProvider
     const cards = [...container.querySelectorAll('.management-card')];
     expect(cards).toHaveLength(2);
-    expect(cards[0].textContent).toContain('正在使用');
+    expect(cards[0].textContent).toContain('已选定');
+    expect(button('已是当前配置', cards[0]).disabled).toBe(true);
+    expect(cards[0].textContent).toContain('未保存密钥');
     expect(cards[1].textContent).toContain('一键切换');
 
     // 4. Click "一键切换" on secondProvider
@@ -1060,13 +1121,12 @@ describe('Agent management parity controls', () => {
     expect(h.mutate).not.toHaveBeenCalled();
     await click('取消', dialog());
 
-    // 5. Reorder provider ("下移" on first card)
-    h.mutate.mockResolvedValueOnce([{ ...secondProvider, sort_index: 0 }, { ...provider, sort_index: 1 }]);
-    await click('下移', cards[0]);
-    expect(h.mutate).toHaveBeenCalledWith('/api/manage/providers/reorder', 'POST', {
-      ordered_ids: ['provider_second', 'provider_fixture'],
+    // A favorite applies to this assistant, even when the library is paginated.
+    h.mutate.mockResolvedValueOnce({});
+    await act(async () => cards[1].querySelector('button[aria-label^="常用服务商"]').click());
+    expect(h.mutate).toHaveBeenCalledWith('/api/manage/agent-preferences', 'POST', {
+      host_id: 'codex', action: 'pin', provider_id: 'provider_second',
     });
-
     // 6. Multi-host sync modal ("同步到多宿主")
     await click('同步到多宿主', cards[0]);
     expect(dialog().textContent).toContain('同步到多宿主');
@@ -1194,7 +1254,7 @@ it('shows model choice separately from file resources after apply', async () => 
   expect(summary.querySelector('ul').textContent).not.toContain('尚未应用');
 });
 
-it('displays summary default_model and external active badge even when prior selection was externally changed', async () => {
+it('preserves historical provider definitions without treating them as a current native selection', async () => {
   const ccSummaryProvider = {
     id: 'provider_cc_current',
     name: 'OpenAI Official',
@@ -1218,17 +1278,15 @@ it('displays summary default_model and external active badge even when prior sel
   };
   await mount();
   const card = container.querySelector('.management-card');
-  expect(card.classList.contains('is-active-card')).toBe(true);
+  expect(card.classList.contains('is-active-card')).toBe(false);
   expect(card.querySelector('.cc-model-pill')?.textContent).toBe('gpt-5.6-sol');
-  expect(card.textContent).toContain('本机当前生效');
+  expect(card.textContent).not.toContain('本机当前生效');
   const currentConfig = container.querySelector('.agent-current-configuration');
-  expect(currentConfig.textContent).toContain('OpenAI Official');
-  expect(currentConfig.textContent).toContain('gpt-5.6-sol');
-  expect(currentConfig.textContent).toContain('本机当前生效');
+  expect(currentConfig.textContent).toContain('当前选择需重新核对');
+  expect(currentConfig.textContent).not.toContain('OpenAI Official');
 });
 
-it('displays clean local-config labels for synced/migrated assets and migration source formats without leaking cc-switch', async () => {
-  const { ManagementMigration } = await import('../src/components/ManagementMigration.jsx');
+it('keeps prior library assets readable and removes third-party migration entry points', async () => {
   h.data[resourcePagePath('mcp', 'assigned')] = pageOf([
     { id: 'mcp_synced', name: 'node_repl', kind: 'mcp', version: 1, agent_ids: ['codex'], source: { type: 'cc-switch' }, _summary: true },
     { id: 'mcp_migrated', name: 'migrated_tool', kind: 'mcp', version: 1, agent_ids: ['codex'], source: { type: 'cc-switch-migration' }, _summary: true },
@@ -1242,18 +1300,10 @@ it('displays clean local-config labels for synced/migrated assets and migration 
     expect(facts).not.toContain('cc-switch');
   }
 
-  h.data['/api/manage/migrations/sources'] = {
-    candidates: [
-      { source_path: '/tmp/config.db', format: 'cc-switch-sqlite', status: 'available' },
-      { source_path: '/tmp/config.json', format: 'cc-switch-json', status: 'available' },
-    ],
-  };
-  await act(async () => root.render(<ManagementMigration onChanged={() => {}} />));
-  await click('迁移本地配置');
-  const selectText = dialog().querySelector('select')?.textContent || '';
-  expect(selectText).toContain('/tmp/config.db · SQLite');
-  expect(selectText).toContain('/tmp/config.json · JSON');
-  expect(selectText).not.toContain('cc-switch');
+  await mount('advanced');
+  expect(container.textContent).not.toContain('迁移本地配置');
+  expect(h.paths).not.toContain('/api/manage/migrations/sources');
+
 });
 
 it('sanitizes compatibility wire keys in EvidenceDetails, maps connection badges, sends confirmed=true on pause/resume, and formats raw warnings', async () => {
@@ -1274,7 +1324,7 @@ it('sanitizes compatibility wire keys in EvidenceDetails, maps connection badges
   expect(cardText).not.toContain('cc_switch');
   expect(cardText).not.toContain('cc-switch');
   expect(cardText).not.toContain('reference_commit');
-  expect(cardText).toContain('local_active_hosts');
+  expect(cardText).not.toContain('local_active_hosts');
 
   // 2. Disconnected StatusBadge renders localized "未接入" instead of raw "not_connected"
   const connBar = container.querySelector('.cc-connection-status-bar');
@@ -1378,3 +1428,75 @@ it('surfaces partial failures and queues multiple conflict_preview plans in mult
   expect(dialog().textContent).toContain('同步到多宿主');
 });
 
+
+it('lists the six Agent families, including entries with no detected installation', async () => {
+  const families = ['claude-code', 'opencode', 'omp', 'cursor', 'antigravity'].map(id => ({ id }));
+  const desktop = { ...host, id: 'codex-desktop', name: 'Codex Desktop', shared_configuration: true };
+  const agy = { id: 'antigravity-cli', name: 'Antigravity CLI' };
+  h.data['/api/manage/hosts'] = [{ ...host, shared_configuration: true }, ...families, desktop, agy, { id: 'hermes', name: 'Hermes' }];
+  const choose = vi.fn();
+  await act(async () => root.render(<AgentManagementPage onAgentChange={choose} />));
+  expect(container.querySelector('h1').textContent).toBe('Agent 管理');
+  expect([...container.querySelectorAll('.agent-choice strong')].map(item => item.textContent))
+    .toEqual(['Claude Code', 'Codex', 'OpenCode', 'Oh My Pi (OMP)', 'Cursor', 'Antigravity']);
+  await change(field('查找助手', container), 'Omp');
+  await act(async () => container.querySelector('.agent-choice').click());
+  expect(choose).toHaveBeenCalledWith('omp', 'providers');
+  await act(async () => root.render(<AgentManagementPage agentId="codex-desktop" onAgentChange={choose} />));
+  expect(container.querySelector('h1').textContent).toBe('Codex');
+  expect(container.querySelector('.agent-surface select')).toBeNull();
+  expect(container.querySelector('.agent-surface').textContent).toContain('共用配置');
+  await click('所有助手');
+  expect(choose).toHaveBeenCalledWith('', '');
+});
+
+it('uses one Antigravity tools view while keeping entry-specific rules selectable', async () => {
+  const paths = { mcp_path: '/shared/mcp.json', skill_dir: '/shared/skills' };
+  const common = { paths, capabilities: { mcp: true, prompts: true } };
+  h.data['/api/manage/hosts'] = [
+    { ...common, id: 'antigravity', name: 'Antigravity Desktop' },
+    { ...common, id: 'antigravity-cli', name: 'Antigravity CLI' },
+  ];
+  const choose = vi.fn();
+  await act(async () => root.render(<AgentManagementPage agentId="antigravity-cli" section="mcp" onAgentChange={choose} />));
+  expect(container.querySelector('h1').textContent).toBe('Antigravity');
+  expect(container.querySelector('.agent-surface select')).toBeNull();
+  expect(container.querySelector('.agent-surface').textContent).toContain('共用此处的配置');
+  await act(async () => root.render(<AgentManagementPage agentId="antigravity-cli" section="prompt" onAgentChange={choose} />));
+  const select = field('配置入口', container);
+  expect(select.value).toBe('antigravity-cli');
+  await change(select, 'antigravity');
+  expect(choose).toHaveBeenCalledWith('antigravity', 'prompt');
+});
+
+it('reads only the chosen native source, requires an explicit selection, and invalidates a changed source', async () => {
+  await mount();
+  await click('读取原生配置');
+  expect(h.mutate).not.toHaveBeenCalled();
+  const preview = { host_id: 'codex', kind: 'providers', fingerprint: 'original', candidates: [{ id: 'local', name: 'Original provider', available: true }] };
+  h.mutate.mockResolvedValueOnce(preview);
+  await click('读取并预览', dialog());
+  expect(h.mutate).toHaveBeenCalledWith('/api/manage/hosts/codex/native/preview', 'POST', { kind: 'providers' });
+  expect(button('保存所选 0 项', dialog()).disabled).toBe(true);
+  await act(async () => dialog().querySelector('input[type=checkbox]').click());
+  h.mutate.mockRejectedValueOnce(Object.assign(new Error('changed'), { status: 409 }));
+  await click('保存所选 1 项', dialog());
+  expect(h.mutate).toHaveBeenCalledWith('/api/manage/hosts/codex/native/import', 'POST', { kind: 'providers', selected_ids: ['local'], fingerprint: 'original', confirmed: true });
+  expect(dialog().textContent).toContain('来源或资料已变化');
+  expect(dialog().querySelector('input[type=checkbox]')).toBeNull();
+});
+
+it('uses the quick-switch route and reads back the chosen provider before showing file verification', async () => {
+  h.data['/api/manage/providers'] = [{ ...provider, default_model: 'explicit' }];
+  await mount();
+  const plan = { id: 'id', status: 'applied', payload: { metadata: { host_id: 'codex', provider_id: provider.id } } };
+  h.mutate.mockResolvedValueOnce({ host_id: 'codex', provider_id: provider.id, status: 'applied', plan });
+  h.request.mockResolvedValueOnce({ host_id: 'codex', selection: { status: 'verified', provider_id: provider.id, model_id: 'explicit' } });
+  await click('一键切换', container.querySelector('.management-card'));
+  expect(h.mutate).toHaveBeenCalledWith('/api/manage/hosts/codex/quick-switch', 'POST', { provider_id: provider.id, model_id: 'explicit', auto_apply: true });
+  expect(container.querySelector('.operation-notice').textContent).toContain('已核对');
+  h.mutate.mockResolvedValueOnce({ host_id: 'codex', provider_id: provider.id, status: 'review_required', plan: { ...plan, status: 'planned' } });
+  await click('一键切换', container.querySelector('.management-card'));
+  expect(dialog().textContent).toContain('检查本次更改');
+  expect(h.mutate.mock.calls.filter(([path]) => path.endsWith('/apply'))).toHaveLength(0);
+});

@@ -186,16 +186,20 @@ app.include_router(handoffs.router)
 app.include_router(audit.router)
 app.include_router(settings_router.router)
 app.include_router(events.router)
-from app.routers import processing
+from app.routers import (
+    account_quotas, agent_preferences, manage, price_corrections, processing,
+    provider_checks, retrieval, routing, usage, working_tasks,
+)
 app.include_router(processing.router)
-from app.routers import retrieval, usage, routing, manage, provider_checks, migration, working_tasks
 app.include_router(retrieval.router)
 app.include_router(usage.router)
+app.include_router(price_corrections.router)
 app.include_router(routing.router)
+app.include_router(agent_preferences.router)
 app.include_router(manage.router)
 app.include_router(provider_checks.router)
-app.include_router(migration.router)
 app.include_router(working_tasks.router)
+app.include_router(account_quotas.router)
 
 # 5. Static uploads directory (protected by loopback/host middleware)
 settings.upload_dir.mkdir(parents=True, exist_ok=True)

@@ -6,6 +6,7 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
+from app.integrations.config_transactions import ConfigurationError
 from app.security import authenticated_agent
 from app.database import create_schema
 from app.main import app
@@ -463,29 +464,9 @@ class TestManagementFeatureParity:
         # Ensure raw secret is masked
         assert "sk-conflict-secret-123456" not in str(conflicts)
 
-        # 7. Compatible JSON import supports mcpServers, providers, prompts, skills + rejects unknown
-        imported = mgr.import_objects(
-            {
-                "format": "cc-switch",
-                "data": {
-                    "mcpServers": {
-                        "time-server": {"command": "uvx", "args": ["mcp-server-time"]},
-                    },
-                    "providers": [
-                        {"name": "DeepSeek Official", "protocol": "openai", "base_url": "https://api.deepseek.com/v1"},
-                    ],
-                    "prompts": {
-                        "concise-style": {"content": "Keep explanations concise."},
-                    },
-                    "skills": {
-                        "repo-audit": {"content": "# Repo Audit Skill\nCheck tests first."},
-                    },
-                    "unknownScript": "ignored",
-                },
-            }
-        )
-        assert len(imported["imported"]) == 4
-        assert any(u["field"] == "unknownScript" for u in imported["unsupported"])
+        # External manager export formats are not accepted as Senrelay backups.
+        with pytest.raises(ConfigurationError):
+            mgr.import_objects({"format": "cc-switch", "data": {"mcpServers": {}}})
 
     def test_reviewer_regressions_relay_memory_and_management_edge_cases(self, tmp_path, monkeypatch):
         monkeypatch.setenv("CONTEXTCORE_DB", str(tmp_path / "regressions.db"))
@@ -678,185 +659,11 @@ class TestManagementFeatureParity:
         after_sync_prov = mgr.get("provider", anthropic_prov["id"])
         assert "cursor" not in (after_sync_prov.get("agent_ids") or [])
 
-    def test_sync_local_environment_and_project_batch_auto_summarize(self, tmp_path, monkeypatch):
-        import json as _json
-        import sqlite3 as _sqlite3
-        from app.config import settings
-
-        home_dir = tmp_path / "home"
-        home_dir.mkdir(parents=True, exist_ok=True)
-        monkeypatch.setenv("HOME", str(home_dir))
-        monkeypatch.setenv("CONTEXTCORE_DB", str(tmp_path / "sync-local.db"))
+    def test_project_batch_auto_summarize(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CONTEXTCORE_DB", str(tmp_path / "batch.db"))
         create_schema()
-
-        # Create a simulated ~/.cc-switch/cc-switch.db with user_version=21
-        cc_dir = home_dir / ".cc-switch"
-        cc_dir.mkdir(parents=True, exist_ok=True)
-        cc_db = cc_dir / "cc-switch.db"
-        conn = _sqlite3.connect(cc_db)
-        conn.executescript(
-            """
-            PRAGMA user_version = 21;
-            CREATE TABLE providers (
-                id TEXT NOT NULL,
-                app_type TEXT NOT NULL,
-                name TEXT NOT NULL,
-                settings_config TEXT NOT NULL,
-                is_current BOOLEAN NOT NULL DEFAULT 0,
-                sort_index INTEGER,
-                meta TEXT NOT NULL DEFAULT '{}',
-                PRIMARY KEY (id, app_type)
-            );
-            CREATE TABLE mcp_servers (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                server_config TEXT NOT NULL,
-                enabled_claude BOOLEAN NOT NULL DEFAULT 0,
-                enabled_codex BOOLEAN NOT NULL DEFAULT 0,
-                enabled_gemini BOOLEAN NOT NULL DEFAULT 0,
-                enabled_opencode BOOLEAN NOT NULL DEFAULT 0
-            );
-            CREATE TABLE prompts (
-                id TEXT NOT NULL,
-                app_type TEXT NOT NULL,
-                name TEXT NOT NULL,
-                content TEXT NOT NULL,
-                enabled BOOLEAN NOT NULL DEFAULT 1,
-                PRIMARY KEY (id, app_type)
-            );
-            CREATE TABLE skills (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                directory TEXT NOT NULL
-            );
-            """
-        )
-        conn.execute(
-            "INSERT INTO providers VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (
-                "p-deepseek",
-                "claude",
-                "DeepSeek CC",
-                _json.dumps(
-                    {
-                        "env": {
-                            "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
-                            "ANTHROPIC_AUTH_TOKEN": "sk-test-1234567890",
-                            "ANTHROPIC_MODEL": "deepseek-chat",
-                        }
-                    }
-                ),
-                1,
-                1,
-                "{}",
-            ),
-        )
-        conn.execute(
-            "INSERT INTO mcp_servers VALUES (?, ?, ?, 1, 1, 0, 0)",
-            (
-                "node_repl",
-                "node_repl",
-                _json.dumps({"command": "npx", "args": ["-y", "mcp-node-repl"]}),
-            ),
-        )
-        conn.execute(
-            "INSERT INTO prompts VALUES (?, ?, ?, ?, 1)",
-            ("pr-1", "claude", "Code Review Standard", "Always run pytest before concluding."),
-        )
-        conn.commit()
-        conn.close()
-
-        # Also create a local skill under ~/.claude/skills/my-skill/SKILL.md
-        skill_dir = home_dir / ".claude" / "skills" / "my-skill"
-        skill_dir.mkdir(parents=True, exist_ok=True)
-        (skill_dir / "SKILL.md").write_text("---\nname: my-skill\n---\n# My Skill\nExample Authorization: Bearer sk-1234567890\n", encoding="utf-8")
-
-        # Also create a local host MCP config (~/.cursor/mcp.json) with args + self-entry
-        cursor_dir = home_dir / ".cursor"
-        cursor_dir.mkdir(parents=True, exist_ok=True)
-        (cursor_dir / "mcp.json").write_text(
-            _json.dumps(
-                {
-                    "mcpServers": {
-                        "contextcore": {"command": "python3", "args": ["-m", "app.mcp_server"]},
-                        "cursor-playwright": {"command": "npx", "args": ["-y", "@playwright/mcp@latest"]},
-                    }
-                }
-            ),
-            encoding="utf-8",
-        )
-
-        from app.integrations.secret_store import SecretStore
-        from app.services.management_service import set_secret_store
-
-        class _MemVault(SecretStore):
-            def __init__(self):
-                self.items = {}
-
-            def status(self):
-                return {"available": True, "backend": "memory"}
-
-            def put(self, secret: str) -> str:
-                ref = f"keychain_{len(self.items) + 1:016x}"
-                self.items[ref] = secret
-                return ref
-
-            def get(self, reference: str) -> str:
-                return self.items[reference]
-
-            def delete(self, reference: str) -> None:
-                self.items.pop(reference, None)
-
-        vault = _MemVault()
-        set_secret_store(vault)
-        try:
-            client = TestClient(app, base_url="http://127.0.0.1:8420", client=("127.0.0.1", 50000))
-            csrf_token = client.get("/api/session").json()["csrf_token"]
-            headers = {"X-CSRF-Token": csrf_token}
-
-            sync_resp = client.post("/api/manage/sync-local", headers=headers, json={})
-            assert sync_resp.status_code == 200
-            sync_data = sync_resp.json()
-            assert sync_data["ok"] is True
-            assert sync_data["total_providers"] >= 1
-            assert sync_data["total_models"] >= 1
-            assert sync_data["total_assets"] >= 4
-
-            provs = client.get("/api/manage/providers").json()
-            if isinstance(provs, dict):
-                provs = provs["items"]
-            ds_prov = next(p for p in provs if p["name"] == "DeepSeek CC")
-            assert ds_prov["has_credential"] is True
-            assert ds_prov["credential_reattach_required"] is False
-            assert ds_prov["supported_endpoints"] == ["messages"]
-            assert "claude-code" in (ds_prov.get("cc_switch_current_hosts") or [])
-
-            # 1-click quick-switch on synced external provider checks explicit model selection (no 409 reattach error)
-            qs_resp = client.post(
-                "/api/manage/hosts/claude-code/quick-switch",
-                headers=headers,
-                json={"provider_id": ds_prov["id"]},
-            )
-            assert qs_resp.status_code == 422  # Imported catalog is not an explicit model selection.
-
-            # Host MCP config was synced with args preserved, and 'contextcore' self-entry was skipped
-            assets = client.get("/api/manage/assets").json()
-            if isinstance(assets, dict):
-                assets = assets["items"]
-            asset_names = {a["name"]: a for a in assets}
-            assert "contextcore" not in asset_names
-            assert "cursor-playwright" in asset_names
-            assert asset_names["cursor-playwright"]["config"]["args"] == ["-y", "@playwright/mcp@latest"]
-
-            # Disabling an un-installed synced asset returns 200 disabled instead of 409
-            qt_off = client.post(
-                "/api/manage/hosts/cursor/quick-toggle-asset",
-                headers=headers,
-                json={"asset_id": asset_names["cursor-playwright"]["id"], "enabled": False},
-            )
-            assert qt_off.status_code == 409  # External MCP entry must not be claimed or removed.
-        finally:
-            set_secret_store(None)
+        client = TestClient(app, base_url="http://127.0.0.1:8420", client=("127.0.0.1", 50000))
+        headers = {"X-CSRF-Token": client.get("/api/session").json()["csrf_token"]}
 
         # Project-level auto-summarize without explicit conversation_id or messages
         proj = project_service.create_project(name="Batch Summarize Project")

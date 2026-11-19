@@ -130,22 +130,13 @@ def test_http_quick_actions_return_redacted_previews_and_reject_nonboolean(manag
     assert owned(manager) == []
 
 
-def test_import_without_model_keeps_model_unknown(manager):
-    import json
-    import sqlite3
-    directory = manager.home / '.cc-switch'
-    directory.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(directory / 'cc-switch.db') as conn:
-        conn.executescript('PRAGMA user_version=21; CREATE TABLE providers (id TEXT, app_type TEXT, name TEXT, settings_config TEXT, is_current INTEGER);')
-        conn.execute('INSERT INTO providers VALUES (?,?,?,?,?)', ('missing', 'codex', 'No model configured', json.dumps({'config': 'model_provider="synthetic"\n[model_providers.synthetic]\nname="Synthetic"\nbase_url="https://synthetic.invalid/v1"\nwire_api="responses"\n'}), 1))
-    manager.sync_local_environment()
-    providers = manager.list('provider')
-    imported = next(p for p in providers if p['name'] == 'No model configured')
-    assert imported.get('model_map', {}) == {}
-    assert not [m for m in manager.list('model') if m['provider_id'] == imported['id']]
-    with pytest.raises(ConfigurationError, match='explicit model'):
-        manager.quick_switch_provider('codex', imported['id'])
-    assert not (manager.home / '.codex/config.toml').exists()
+def test_provider_without_model_requires_explicit_selection(manager):
+    provider = manager.save("provider", {"name": "No model configured", "protocol": "openai",
+                                         "base_url": "https://synthetic.invalid/v1"})
+    assert not provider.get("model_map")
+    with pytest.raises(ConfigurationError, match="explicit model"):
+        manager.quick_switch_provider("codex", provider["id"])
+    assert not (manager.home / ".codex/config.toml").exists()
 
 
 @pytest.mark.parametrize('shortcut', ['switch', 'toggle', 'sync'])

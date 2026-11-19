@@ -58,6 +58,9 @@ with tempfile.TemporaryDirectory(prefix='senrelay-desktop-check-') as tmp:
                     return json.load(response)
             # Exercise management inside the real frozen runtime, with a clean
             # temporary home and no credentials, host execution or model calls.
+            (home / '.codex').mkdir(exist_ok=True)
+            (home / '.codex/config.toml').write_text(
+                '[model_providers.personal]\nname = "Personal"\nbase_url = "https://provider.example/v1"\nwire_api = "responses"\n')
             created = post('/api/manage/providers/setup', {'request_id': 'bundle-smoke-setup-0001', 'host_id': 'codex',
                 'provider': {'name': 'Bundle fixture', 'base_url': 'http://127.0.0.1:18999/v1', 'protocol': 'openai'}, 'model_id': 'bundle-fixture-model'})
             plan = post('/api/manage/plans', {'host_id': 'codex', 'provider_id': created['provider']['id'], 'model_id': created['model']['id'], 'activate_provider': True})
@@ -69,6 +72,31 @@ with tempfile.TemporaryDirectory(prefix='senrelay-desktop-check-') as tmp:
             assert configured['selection']['model_id'] == 'bundle-fixture-model'
             assert configured['credentials_read'] is False
             assert 'bundle-fixture-model' in (home / '.codex/config.toml').read_text()
+            def get(path):
+                with opener.open(base + path, timeout=5) as response:
+                    return json.load(response)
+            # These adapters and routers must also be present in the frozen runtime.
+            prefs = get('/api/manage/agent-preferences')
+            assert 'codex' in prefs['host_names'] and 'codex' in prefs['favorite_hosts']
+            quotas = get('/api/account-quotas?host_id=codex')['items']
+            codex_quota = next(item for item in quotas if item['id'] == 'native-codex')
+            assert codex_quota['last_attempt_at'] is None and codex_quota['snapshot'] is None
+            native = post('/api/manage/hosts/codex/native/preview', {'kind': 'providers'})
+            assert native['status'] == 'ready' and any(item.get('available') and item.get('base_url') == 'https://provider.example/v1' for item in native['candidates'])
+            usage = {'origin': 'proxy', 'logical_request_id': 'packaged-request',
+                     'host_id': 'codex', 'model': 'test', 'raw_usage': {}}
+            post('/api/usage/ingest', {'observations': [
+                {**usage, 'observation_id': 'first', 'attempt_id': 'first', 'provider_id': 'first',
+                 'status': 'failed', 'error_code': 'upstream_http_429', 'started_at': '2026-05-20T00:00:00Z'},
+                {**usage, 'observation_id': 'second', 'attempt_id': 'second', 'provider_id': 'reserve',
+                 'status': 'succeeded', 'started_at': '2026-05-20T00:00:01Z'}]})
+            totals = get('/api/usage/overview?host_id=codex')
+            assert (totals['logical_requests'], totals['attempts']) == (1, 2)
+            assert get('/api/usage/logical-requests?host_id=codex')['items'][0]['status'] == 'succeeded'
+            assert get('/api/usage/attempts?logical_request_id=packaged-request')['total'] == 2
+            with opener.open(base + '/api/usage/export?host_id=codex', timeout=5) as response:
+                assert response.headers.get_content_disposition() == 'attachment'
+                assert 'packaged-request' in response.read().decode('utf-8-sig')
             # Installing/removing a project bundle without model activation
             # must preserve the selection recorded by the frozen service too.
             tool = post('/api/manage/assets', {'name': 'Project bundle tool', 'kind': 'mcp', 'config': {'url': 'http://127.0.0.1:18999/mcp', 'transport': 'http'}})
@@ -162,7 +190,7 @@ with tempfile.TemporaryDirectory(prefix='senrelay-desktop-check-') as tmp:
                 [str(service), '-m', 'app.cli', 'serve', '--data-dir', str(root / 'data'), '--port', str(port)],
                 stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, timeout=8)
             assert duplicate.returncode != 0, duplicate.stderr
-            print(json.dumps({'health': True, 'release': release, 'static_assets': len(assets), 'no_demo_projects': True, 'capture_disabled': True, 'duplicate_rejected': True, 'packaged_management_apply_readback': True, 'packaged_nonactivating_project_bundle_keeps_selection': True, 'packaged_legacy_bundle_selection_readback': True, 'packaged_reference_guard_and_delete': True, 'packaged_independent_routing_guard': True, 'packaged_metadata_only_large_skill_delete': True, 'packaged_host_mode_preview_and_unconfirmed_apply_refusal': True}, indent=2))
+            print(json.dumps({'health': True, 'release': release, 'static_assets': len(assets), 'no_demo_projects': True, 'capture_disabled': True, 'duplicate_rejected': True, 'packaged_management_apply_readback': True, 'packaged_native_preview_and_quota_cache': True, 'packaged_logical_ledger_and_export': True, 'packaged_nonactivating_project_bundle_keeps_selection': True, 'packaged_legacy_bundle_selection_readback': True, 'packaged_reference_guard_and_delete': True, 'packaged_independent_routing_guard': True, 'packaged_metadata_only_large_skill_delete': True, 'packaged_host_mode_preview_and_unconfirmed_apply_refusal': True}, indent=2))
         finally:
             if process.poll() is None:
                 process.terminate()

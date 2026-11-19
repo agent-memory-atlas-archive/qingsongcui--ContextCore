@@ -89,6 +89,46 @@ def test_cumulative_reset_replay_and_timezone_filters(ledger):
         ledger.summary(tz="No/SuchZone")
 
 
+def test_partial_cumulative_fields_do_not_recount_known_tokens_or_misprice_cache(ledger):
+    ledger.add_price({"provider_id": "p", "model": "m", "effective_from": "2026-01-01T00:00:00Z",
+                      "input_per_million": "2", "output_per_million": "1", "cache_read_per_million": "1"})
+    stream = {"cumulative": True, "source_id": "partial-meter"}
+    for index, raw in enumerate([
+        {"input_tokens": 100, "cache_read_tokens": 10, "output_tokens": 10},
+        {"input_tokens": 150},
+        {"input_tokens": 190, "cache_read_tokens": 65, "output_tokens": 15},
+        {"input_tokens": 210, "cache_read_tokens": 70, "output_tokens": 18},
+    ]):
+        ledger.ingest([observation("partial-" + str(index), attempt_id="attempt-" + str(index), sequence=index, raw_usage=raw, **stream)])
+    rows = {r["id"]: r for r in ledger.requests()["items"]}
+    assert rows["attempt-1"]["usage"]["output_tokens"] is None
+    assert rows["attempt-2"]["usage"]["output_tokens"] == 5
+    assert rows["attempt-2"]["usage"]["cache_read_tokens"] is None
+    assert rows["attempt-2"]["cost"]["amount"] is None
+    assert rows["attempt-3"]["usage"]["cache_read_tokens"] == 5
+    assert rows["attempt-3"]["usage"]["uncached_input_tokens"] == 15
+    assert ledger.summary()["known_tokens"] == 210 + 18
+
+
+def test_missing_anthropic_cache_counter_does_not_reset_independent_input(ledger):
+    common = {"cumulative": True, "source_id": "anthropic-meter", "protocol": "anthropic"}
+    for seq, raw in enumerate([
+        {"input_tokens": 100, "cache_read_input_tokens": 1000, "output_tokens": 15},
+        {"input_tokens": 120, "output_tokens": 17},
+        {"input_tokens": 175, "cache_read_input_tokens": 1050, "output_tokens": 25},
+    ]):
+        ledger.ingest([observation("cache-gap-" + str(seq), sequence=seq, raw_usage=raw, **common)])
+    assert ledger.summary()["known_tokens"] == 175 + 1050 + 25
+
+
+def test_counter_reset_does_not_carry_absent_fields_into_the_next_epoch(ledger):
+    common = {"cumulative": True, "source_id": "reset-meter"}
+    for seq, raw in enumerate([{"input_tokens": 200, "output_tokens": 10}, {"input_tokens": 2},
+                               {"input_tokens": 15, "output_tokens": 12}]):
+        ledger.ingest([observation("epoch-" + str(seq), sequence=seq, raw_usage=raw, **common)])
+    assert ledger.summary()["known_tokens"] == 200 + 10 + 15 + 12
+
+
 def test_real_timing_rules_single_chunk_and_heartbeat(ledger):
     ledger.ingest([observation(origin="proxy", first_content_at="2026-10-23T16:01:01Z", last_content_at="2026-10-23T16:01:03Z", ended_at="2026-10-23T16:01:04Z", content_chunks=2)])
     data = ledger.summary()["performance"]

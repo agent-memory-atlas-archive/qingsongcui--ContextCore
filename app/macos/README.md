@@ -4,6 +4,12 @@ Senrelay uses an AppKit window and WKWebView for the current workbench. The bund
 
 The streamlined three-entry primary navigation (`项目工作台`, `Agent 管理`, `用量与性能`, plus conditional `待确认` when conflicts are pending) and compact desktop controls are retained. Project data belongs to the local service and persists when the window closes. The native shell supports Chinese and English, initially follows the system/app preference, and follows language changes in the workbench. Startup errors provide a reconnect action; interrupted page processes and failed downloads have visible recovery messages.
 
+## Menu bar and keyboard navigation
+
+Open the Senrelay menu bar icon to see favorite and recent agents. Each agent submenu reads the current provider, model and configuration file status from the workbench service. Choose the agent’s models, change history or usage to open that screen. Account quotas shows saved readings and their observation times. Open the full quota screen to authorize a refresh.
+
+The **Go** menu provides ⌘1 for projects, ⌘2 for all agents, ⌘3 for the usage overview and ⌥⌘3 for account quotas. These shortcuts work while the app is active. Navigation keeps the existing workbench document and supports Back.
+
 ## Build a candidate from source
 
 On macOS, install Command Line Tools, the locked backend build extra and the frontend dependencies. Commands start at the repository root:

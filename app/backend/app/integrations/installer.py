@@ -44,6 +44,7 @@ from app.integrations.constants import (
     HostId,
     SUPPORTED_HOSTS,
 )
+from app.services.host_config_roots import require_integration_root
 from app.integrations.templates import (
     CC_HOOK_PATH,
     render_hooks_config,
@@ -543,6 +544,8 @@ def apply_host_integration(
     needs_token = bool(selected & {"mcp", "hooks"})
     host: HostId = agent_id  # type: ignore
     resolved_home = Path(home).resolve() if home else Path.home().resolve()
+    if home is None:
+        require_integration_root(agent_id, None, resolved_home, os.environ)
     if "mcp" in selected and host == "opencode" and (resolved_home / ".config/opencode/opencode.jsonc").exists():
         raise ValueError(
             "OpenCode uses opencode.jsonc; automatic merge would drop comments. "
@@ -943,6 +946,8 @@ def uninstall_host_integration(
 
     host: HostId = agent_id  # type: ignore
     resolved_home = Path(home).resolve() if home else Path.home().resolve()
+    if home is None:
+        require_integration_root(agent_id, None, resolved_home, os.environ)
 
     manifest = _load_manifest(agent_id, resolved_home)
     if not manifest:

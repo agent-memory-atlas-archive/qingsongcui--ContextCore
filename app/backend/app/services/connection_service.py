@@ -1858,37 +1858,44 @@ def setup_connection(connection_id: str, base_url: str | None = None) -> dict[st
         installed_components, installation_review = [], 'review_required'
     from app.services.connection_plans import ConnectionPlans
     planner = ConnectionPlans()
+    from app.services.host_config_roots import override_root
+    config_root = override_root(connection_id, planner.home, os.environ)
+    surfaces = list(HOST_DEFINITIONS[connection_id].surfaces)
+    blocked_surfaces = [s for s in surfaces if not (connection_id == 'codex' and s == 'desktop')] if config_root else []
+    plan_supported = any(s not in blocked_surfaces for s in surfaces)
     with planner.transactions.connect() as pending_conn:
         pending_plans = [dict(row) for row in pending_conn.execute(
             "SELECT id,status FROM management_plans WHERE status IN ('applying','recovery_required') AND json_extract(payload,'$.metadata.namespace')='connections' AND json_extract(payload,'$.metadata.host_id')=? ORDER BY created_at LIMIT 10", (connection_id,))]
     return {
         "id": connection_id,
         "label": conn_data["label"],
-        "plan_supported": True,
-        "surfaces": list(HOST_DEFINITIONS[connection_id].surfaces),
+        "plan_supported": plan_supported,
+        "surfaces": surfaces,
+        "config_root": config_root,
+        "blocked_surfaces": blocked_surfaces,
         "installed_components": installed_components,
         "installation_review": installation_review,
         "pending_plans": pending_plans,
         "token": None,
         "token_preview": "configured" if token_preview else None,
-        "config_preview": bundle.mcp_config["content"],
+        "config_preview": bundle.mcp_config["content"] if plan_supported else None,
         "target_paths": {
             "credential": bundle.credential_path,
             "mcp": bundle.mcp_config["target_path"],
             "hooks": bundle.hooks_config["target_path"],
             "skill": bundle.skill_or_command["target_path"],
             "manifest": manifest_p,
-        },
+        } if plan_supported else {},
         "operations": [
             {"action": "write_credential", "path": bundle.credential_path, "description": "写入 0600 权限的 Agent 访问令牌"},
             {"action": "configure_mcp", "path": bundle.mcp_config["target_path"], "description": "写入或合并 ContextCore MCP 服务配置"},
             {"action": "configure_hooks", "path": bundle.hooks_config["target_path"], "description": "配置会话采集 Hook / 扩展事件"},
             {"action": "install_skill", "path": bundle.skill_or_command["target_path"], "description": "安装 ContextCore 接棒命令或技能"},
             {"action": "write_manifest", "path": manifest_p, "description": "写入 ContextCore 托管所有权凭证 (Owner Manifest)"},
-        ],
-        "bundle": bundle.to_dict(),
+        ] if plan_supported else [],
+        "bundle": bundle.to_dict() if plan_supported else None,
         "notes": bundle.notes,
-        "instructions": bundle.install_script,
+        "instructions": bundle.install_script if plan_supported else None,
     }
 
 def verify_agent_token(token: str, *, purpose: str = "context_tools") -> str | None:

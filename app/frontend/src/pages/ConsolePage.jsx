@@ -54,9 +54,18 @@ export function ConsolePage({
   navigate,
   returnAgent,
   embedded = false,
+  installerRoot,
   managementAvailable = true
 }) {
   const resource = useResource('/api/connections', revision);
+  const hosts = useResource(!embedded && managementAvailable ? '/api/manage/hosts' : null, revision);
+  const rootFor = item => embedded ? installerRoot : (Array.isArray(hosts.data) ? hosts.data : hosts.data?.items)?.find(host => host.id === item.id)?.config_root;
+  const setupSurface = item => {
+    if (item.id !== 'codex') return null;
+    if (embedded) return returnAgent === 'codex-desktop' ? 'desktop' : 'cli';
+    return rootFor(item) ? 'desktop' : null;
+  };
+  const setupBlocked = item => Boolean(rootFor(item)) && (embedded || item.id !== 'codex');
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(null);
@@ -135,6 +144,7 @@ export function ConsolePage({
         id: item.id,
         label: item.label,
         mode: 'preview',
+        targetSurface: setupSurface(item),
         data: await request(`/api/connections/${item.id}/setup`)
       });
     } catch (failure) {
@@ -154,6 +164,7 @@ export function ConsolePage({
     <ErrorNotice error={error} />{notice ? <p className="operation-notice" role="status">{notice}</p> : null}
     <ResourceState resource={resource}>{visible?.length ? <div className="connections-grid">{visible.map(item => <section className="connection-panel" key={item.id}>
       <header><span className="connection-monogram">{item.label.slice(0, 1)}</span><div><h2>{item.label}</h2><p>{item.enabled ? item.paused ? t("采集已暂停") : t("已授权读取聊天") : item.discovered ? t("已发现 · 未授权读取聊天") : t("尚未发现")}</p></div><span className={`status-dot ${item.enabled && !item.paused && !item.error ? 'online' : ''}`} /></header>
+      {rootFor(item) ? <p className="muted">{t('安装或移除续境接入组件，请用默认配置目录重新启动续境与助手。已授权的记录可继续采集。')} <code>{rootFor(item).variable} · {rootFor(item).path}</code></p> : null}
       <p className="sync-time">{t("上下文工具：{state}", { state: item.authorizations?.context_tools === true ? t("已授权") : t("未授权") })} · {t("生命周期通知：{state}", { state: item.authorizations?.lifecycle === true ? t("已授权") : t("未授权") })}</p>
       <div className="capability-list group">{Object.entries(CAPABILITIES).map(([key, label]) => {
               const capability = item.capabilities?.[key];
@@ -177,7 +188,7 @@ export function ConsolePage({
                 setDisconnect(item);
                 setError(null);
               }} />
-      </>}<Button disabled={!!busy} onClick={() => showSetup(item)} busy={busy === item.id}>{t("接入说明与配置")}</Button></footer>
+      </>}<Button disabled={!!busy || setupBlocked(item)} onClick={() => showSetup(item)} busy={busy === item.id}>{t("接入说明与配置")}</Button></footer>
     </section>)}</div> : <EmptyState title={agentId ? t("这个助手暂没有聊天接入") : t("发现你的协作工具")} body={agentId ? t("配置管理和聊天接入是两项能力。当前列表没有这个助手的来源接口；不会替它接入其他助手，也不会自动授权。") : t("只找出可用的工具和记录位置。真要读，还需要你确认范围。")} />}</ResourceState>
     <aside className="quiet-note">{t("本机记录里可能有机密信息，会按你的规则原样保存。读取聊天、上下文工具与生命周期通知分别授权；暂停采集不会撤销已授权的上下文工具。")}</aside>
     {connect ? <Modal title={t("接入 {name}", { name: connect.label })} busy={!!busy} onClose={() => setConnect(null)}><div className="editor-form"><Field label={t("授权读取的记录位置")} hint={t("一行一个路径。只读这些位置里支持读取的记录，不会翻遍整台电脑。留空不等于能读全部。")}><textarea rows={5} value={paths} onChange={event => { setPathsTouched(true); setPaths(event.target.value); }} /></Field>{extraSuggestedPaths.length > 0 ? <div className="suggested-paths toolbar-actions" role="group" aria-label={t("可添加的建议路径")}>{extraSuggestedPaths.map(candidate => <Button key={candidate.path} onClick={() => { setPathsTouched(true); setPaths(current => cleanPathList([...current.split('\n'), candidate.path]).join('\n')); }}>{candidate.symlink ? t("+ 添加建议路径：{path}（符号链接需确认）", { path: candidate.path }) : t("+ 添加建议路径：{path}", { path: candidate.path })}</Button>)}</div> : null}{emptyEnabledPaths ? <p className="muted" role="status">{t("至少保留一个授权目录，或先停止接入")}</p> : null}<label className="check-label consent"><input type="checkbox" checked={consent} onChange={event => setConsent(event.target.checked)} /><span>{t("允许读取上面这些位置的历史和新增记录，保存原文与记忆，供已接入的 Agent 使用。我知道记录不会自动打码。这次授权只允许读取记录，不包括修改它的配置文件。")}</span></label><ErrorNotice error={error} /><footer className="modal-actions"><Button onClick={() => setConnect(null)}>{t("取消")}</Button>{emptyEnabledPaths ? <Button onClick={() => { const target = latestConnect; setConnect(null); setDisconnect(target); setError(null); }}>{t("停止接入")}</Button> : null}<Button variant="primary" disabled={!consent || resource.loading || emptyEnabledPaths} busy={busy === connect.id} onClick={enable}>{t("确认授权范围")}</Button></footer></div></Modal> : null}

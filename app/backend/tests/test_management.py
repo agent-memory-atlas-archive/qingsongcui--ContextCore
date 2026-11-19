@@ -252,7 +252,7 @@ def test_accounts_cannot_fake_oauth_and_explicit_local_api_key(manager):
     assert not manager.vault.values
 
 
-def test_export_import_relinks_entities_and_reports_unknown_migration_fields(manager, tmp_path):
+def test_export_import_relinks_entities_and_rejects_foreign_backup_formats(manager, tmp_path):
     provider = manager.save("provider", {"name": "P", "base_url": "https://example.test/v1", "protocol": "openai"})
     asset = mcp(manager)
     manager.save("bundle", {"name": "B", "provider_id": provider["id"], "asset_ids": [asset["id"]], "host_ids": ["codex"]})
@@ -263,8 +263,8 @@ def test_export_import_relinks_entities_and_reports_unknown_migration_fields(man
     assert not result["unsupported"]
     assert other.list("bundle")[0]["provider_id"] == other.list("provider")[0]["id"]
     assert other.list("bundle")[0]["asset_ids"] == [other.list("asset")[0]["id"]]
-    result = other.import_objects({"format": "cc-switch", "data": {"unknownScript": "do not run", "mcpServers": {"Test": {"command": "server"}}}})
-    assert len(result["imported"]) == 1 and result["unsupported"][0]["field"] == "unknownScript"
+    with pytest.raises(ConfigurationError):
+        other.import_objects({"format": "cc-switch", "data": {"mcpServers": {}}})
 
 
 def test_management_router_contract(manager, monkeypatch):

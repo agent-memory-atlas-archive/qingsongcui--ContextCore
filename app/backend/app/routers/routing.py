@@ -42,6 +42,7 @@ async def messages(request: Request):
 
 
 @router.get('/v1/hosts/{host_id}/models')
+@router.get('/v1/hosts/{host_id}/v1/models', include_in_schema=False)
 def host_models(host_id: str, request: Request):
     value = service.host_profile(host_id, request.headers)
     aliases = list(value['gateway']['model_map'])
@@ -59,5 +60,6 @@ async def host_responses(host_id: str, request: Request):
 
 
 @router.post('/v1/hosts/{host_id}/messages')
+@router.post('/v1/hosts/{host_id}/v1/messages', include_in_schema=False)
 async def host_messages(host_id: str, request: Request):
     return await service.forward(request, 'messages', host_id)

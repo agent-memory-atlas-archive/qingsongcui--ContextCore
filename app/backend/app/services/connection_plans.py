@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import secrets
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -13,6 +14,7 @@ from app.integrations.installer import apply_host_integration, _manifest_path
 from app.integrations.constants import SUPPORTED_HOSTS
 from app.integrations.recovery import plan_recovery, read_file
 from app.integrations.secret_store import KeychainSecretStore
+from app.services.host_config_roots import override_root, require_integration_root
 from app.services.host_registry import discover_hosts, HOST_DEFINITIONS
 
 CAPABILITIES = {'context_tools': 'mcp', 'continuation': 'skill', 'lifecycle': 'hooks'}
@@ -33,6 +35,16 @@ class ConnectionPlans:
         self.isolated = home is not None
         self.transactions = ConfigurationTransactions(settings.db_path, settings.db_path.parent/'configuration-snapshots',
                                                        [self.home], KeychainSecretStore())
+
+    def check_root(self, host, surface, *, previous=None):
+        env = {} if self.isolated else os.environ
+        require_integration_root(host, surface, self.home, env)
+        # A Codex desktop plan prepared while the CLI uses a different profile
+        # must not later enable components in both surfaces without review.
+        shared = host == 'codex' and override_root(host, self.home, env) is None
+        if host == 'codex' and previous is not None and previous.get('shared_profile', True) != shared:
+            raise ConfigurationError('Codex configuration sharing changed since preview. Review the affected surfaces again.', 409)
+        return shared
 
     def _state(self, host, conn=None):
         if conn is None:
@@ -104,6 +116,7 @@ class ConnectionPlans:
             raise ConfigurationError('Explicit distinct connection capabilities are required', 422)
         if surface not in HOST_DEFINITIONS[host].surfaces:
             raise ConfigurationError('Select the target host entry', 422)
+        shared_profile = self.check_root(host, surface)
         components = [CAPABILITIES[c] for c in capabilities]
         from app.services.connection_service import resolve_trusted_base_url
         base_url = resolve_trusted_base_url(base_url)
@@ -118,7 +131,7 @@ class ConnectionPlans:
                 raise ConfigurationError('No installed components to update')
             files, _ = self._render(host, operation, components, base_url, preview=True)
             metadata = {'namespace': 'connections', 'host_id': host, 'surface': surface, 'operation': operation,
-                        'capabilities': capabilities, 'components': components, 'base_url': base_url,
+                        'capabilities': capabilities, 'components': components, 'base_url': base_url, 'shared_profile': shared_profile,
                         'host_identity': self._host_identity(host, surface), 'state_hash': self._state_hash(host),
                         'expires_at': (datetime.now(timezone.utc)+timedelta(minutes=30)).isoformat(),
                         'dependencies': ['Context tools must be available to execute the continuation command'] if 'continuation' in capabilities else [],
@@ -139,6 +152,7 @@ class ConnectionPlans:
         with configuration_lock:
             plan = self.get(host, plan_id)
             meta = plan['payload']['metadata']
+            self.check_root(host, meta['surface'], previous=meta)
             if plan['status'] != 'applied':
                 if datetime.now(timezone.utc) >= datetime.fromisoformat(meta['expires_at']):
                     raise ConfigurationError('Plan expired; create a new preview')
@@ -172,7 +186,9 @@ class ConnectionPlans:
             return result
 
     def recover(self, host, plan_id, confirmed):
-        self.get(host, plan_id)
+        plan = self.get(host, plan_id)
+        meta = plan['payload']['metadata']
+        self.check_root(host, meta.get('surface'), previous=meta)
         return self.transactions.recover(plan_id, confirmed)
 
 

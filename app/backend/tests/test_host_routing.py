@@ -246,6 +246,13 @@ def test_claude_native_key_header_and_interface_mismatch(manager, client, monkey
     assert client.post('/api/routing/v1/hosts/claude-code/responses', headers=headers, json={'model': DEFAULT_ALIAS}).status_code == 422
     assert calls == []
     assert client.post('/api/routing/v1/hosts/claude-code/messages', headers=headers, json={'model': DEFAULT_ALIAS, 'max_tokens': 1, 'messages': []}).status_code == 200
+    # Claude Code's SDK appends a version segment to ANTHROPIC_BASE_URL.
+    native_url = native["env"]["ANTHROPIC_BASE_URL"]
+    assert client.get(native_url + "/v1/models", headers=headers).json()["data"][0]["id"] == DEFAULT_ALIAS
+    assert client.post(native_url + "/v1/messages", headers=headers, json={"model": DEFAULT_ALIAS, "max_tokens": 1, "messages": []}).status_code == 200
+    apply(manager, manager.plan({"host_id": "claude-code", **choice(value), "activate_provider": True}))
+    direct = json.loads((manager.home / ".claude/settings.json").read_text())
+    assert direct["env"]["ANTHROPIC_BASE_URL"] + "/v1/messages" == value["provider"]["base_url"] + "/messages"
 
 
 @pytest.mark.parametrize('host,endpoint', [('opencode', 'responses'), ('pi', 'chat/completions'), ('kimi-code', 'responses'), ('hermes', 'responses'), ('minimax-code', 'responses'), ('openclaw', 'responses')])
@@ -281,6 +288,107 @@ def test_safe_fallback_uses_reviewed_backup_model_and_linked_state_never_crosses
     rows = usage_service.requests()['items']
     assert len(rows) == 2 and len({row['logical_request_id'] for row in rows}) == 1
     assert all(row['requested_model'] == DEFAULT_ALIAS and row['host_id'] == 'codex' for row in rows)
+
+
+def test_account_receipts_follow_actual_dispatch_and_keep_historical_names(manager, client, monkeypatch):
+    first = provider(manager)
+    second = provider(manager, token="setup-request-0002")
+    account = manager.save("account", {"name": "Work", "kind": "api_key", "provider_id": second["provider"]["id"]})
+    account = manager.credential("account", account["id"], "fixture-work-key")
+    second["provider"] = manager.save("provider", {"credential_source": "account", "account_id": account["id"]},
+                                      second["provider"]["id"], second["provider"]["version"])
+    apply(manager, preview(manager, first, fallbacks=[choice(second)], circuit_threshold=1))
+    def upstream(request):
+        if request.headers["authorization"] == "Bearer fixture-work-key":
+            return response(request)
+        return httpx.Response(429)
+    fake_upstream(monkeypatch, upstream)
+    path = "/api/routing/v1/hosts/codex/responses"
+    result = client.post(path, headers=auth(manager), json={"model": DEFAULT_ALIAS})
+    assert result.status_code == 200
+    rid = result.headers["x-senrelay-request-id"]
+    attempts = sorted(usage_service.requests({"logical_request_id": rid})["items"], key=lambda row: row["attempt_number"])
+    assert [(a["attempt_number"], a["route_version"], a["credential_source"], a.get("account_id")) for a in attempts] == [
+        (1, 1, "provider", None), (2, 1, "account", account["id"])]
+    state = manager.connection_mode("codex")
+    assert state["host_loaded"] == "not_verified"
+    assert state["real_request"] == "observed_successful_gateway_request"
+    diag = state["diagnostics"]
+    assert diag["last_success"]["account_name"] == "Work" and diag["last_success"]["logical_request_id"] == rid
+    assert diag["last_failure"]["error_code"] == "upstream_http_429"
+    circuit = diag["circuits"][first["provider"]["id"]]
+    assert circuit["state"] == "open" and circuit["probe_source"] == "next_user_request"
+    manager.save("account", {"name": "Renamed"}, account["id"], account["version"])
+    apply(manager, preview(manager, second))
+    assert manager.connection_mode("codex")["diagnostics"] == {"last_success": None, "last_failure": None, "circuits": {}}
+    assert manager.connection_mode("codex")["real_request"] == "not_verified"
+    assert client.post(path, headers=auth(manager), json={"model": DEFAULT_ALIAS}).status_code == 200
+    # Fixture upstream repeats its response ID for distinct calls. Both requests survive.
+    attempts = usage_service.requests({"account_id": account["id"]})["items"]
+    assert [(a["route_version"], a["account_name"]) for a in attempts] == [(2, "Renamed"), (1, "Work")]
+    assert "fixture-work-key" not in json.dumps(attempts)
+
+
+def test_gateway_diagnostics_exclude_imported_observations(manager, client):
+    value = provider(manager)
+    apply(manager, preview(manager, value))
+    usage_service.ingest([{"origin": "proxy", "observation_id": "explicit-import", "status": "succeeded",
+                           "started_at": "2026-01-02T00:00:00Z", "host_id": "codex", "route_version": 1}])
+    assert manager.connection_mode("codex")["real_request"] == "not_verified"
+
+
+def test_http_200_without_a_model_response_does_not_verify_the_gateway(manager, client, monkeypatch):
+    apply(manager, preview(manager, provider(manager)))
+    fake_upstream(monkeypatch, lambda _: httpx.Response(200, json={"hello": "world"}))
+    result = client.post("/api/routing/v1/hosts/codex/responses", headers=auth(manager), json={"model": DEFAULT_ALIAS})
+    assert result.status_code == 200
+    diag = manager.connection_mode("codex")["diagnostics"]
+    assert diag["last_success"] is None
+    assert diag["last_failure"]["error_code"] == "incomplete_upstream_response"
+
+
+@pytest.mark.anyio
+async def test_expired_circuit_probes_one_user_request_while_another_uses_backup(manager, client, monkeypatch):
+    from app.database import get_app_setting, set_app_setting
+    a, b = provider(manager), provider(manager, token="setup-request-0002")
+    b["model"] = manager.save("model", {"model_id": "backup"}, b["model"]["id"], b["model"]["version"])
+    apply(manager, preview(manager, a, fallbacks=[choice(b)], circuit_threshold=1))
+    entered, release = asyncio.Event(), asyncio.Event()
+    models = []
+    async def upstream(request):
+        model = json.loads(request.content)["model"]
+        models.append(model)
+        if len(models) == 1:
+            return httpx.Response(429)
+        if model != "backup":
+            entered.set()
+            await release.wait()
+        return response(request)
+    fake_upstream(monkeypatch, upstream)
+    class Request:
+        headers = auth(manager)
+        async def stream(self):
+            yield json.dumps({"model": DEFAULT_ALIAS}).encode()
+        async def is_disconnected(self):
+            return False
+    async def send():
+        return await routing_service.forward(Request(), "responses", "codex")
+    assert (await send()).status_code == 200
+    key = "routing_v2_circuits:codex"
+    circuits = get_app_setting(key)
+    circuits[a["provider"]["id"]]["open_until"] = 1
+    set_app_setting(key, circuits)
+    assert manager.connection_mode("codex")["diagnostics"]["circuits"][a["provider"]["id"]]["state"] == "half_open"
+    probe = asyncio.create_task(send())
+    try:
+        await asyncio.wait_for(entered.wait(), 3)
+        assert manager.connection_mode("codex")["diagnostics"]["circuits"][a["provider"]["id"]]["state"] == "probing"
+        assert (await asyncio.wait_for(send(), 3)).status_code == 200
+    finally:
+        release.set()
+    assert (await probe).status_code == 200
+    assert models == ["fixture-model", "backup", "fixture-model", "backup"]
+    assert manager.connection_mode("codex")["diagnostics"]["circuits"][a["provider"]["id"]]["state"] == "closed"
 
 
 @pytest.mark.anyio

@@ -54,7 +54,7 @@ from app.integrations.host_management_native import (
     require_omp_models_migration, require_omp_settings_migration,
 )
 HOSTS.update(NATIVE_HOSTS)
-HOSTS["codex"]["configuration_notice"] = NATIVE_HOSTS["codex-desktop"]["configuration_notice"]
+HOSTS["codex"]["configuration_notice"] = "Writes shared Codex native files also used by Codex Desktop. Running sessions may need to reload the new settings."
 
 ENTITY_KINDS = {"provider", "model", "binding", "account", "asset", "bundle"}
 
@@ -64,8 +64,12 @@ def _has_entity_reference(conn, kind, entity_id):
         field = 'provider_id' if kind == 'provider' else 'account_id'
         predicate = f"json_extract(e.data,'$.{field}')=?"
         params = [entity_id]
+        if kind == 'account':
+            predicate += """ OR (e.kind='asset' AND EXISTS(SELECT 1 FROM json_each(e.data,'$.mcp_account_bindings') b
+                WHERE json_extract(b.value,'$.account_id')=?))"""
+            params.append(entity_id)
     elif kind == 'model':
-        predicate = "e.kind='binding' AND json_extract(e.data,'$.model_id')=?"
+        predicate = "e.kind IN ('binding','bundle') AND json_extract(e.data,'$.model_id')=?"
         params = [entity_id]
     elif kind == 'asset':
         # Older definitions may have accepted a keyed membership object;
@@ -94,6 +98,16 @@ def ensure_schema(conn: sqlite3.Connection | None = None) -> None:
         with db() as local:
             ensure_schema(local)
         return
+    conn.execute("""CREATE TABLE IF NOT EXISTS management_undo_states (
+        plan_id TEXT PRIMARY KEY, selection TEXT, dependencies TEXT NOT NULL)""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS management_native_imports (
+        source_key TEXT PRIMARY KEY, entity_id TEXT NOT NULL, definition_hash TEXT NOT NULL)""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS management_native_origins (
+        entity_id TEXT PRIMARY KEY, relative_path TEXT NOT NULL, entry_name TEXT NOT NULL, value_hash TEXT NOT NULL,
+        portable_entry INTEGER NOT NULL, was_managed INTEGER NOT NULL DEFAULT 0)""")
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_management_native_origins_path ON management_native_origins(relative_path)')
+    from app.services import agent_preferences
+    agent_preferences.ensure_schema(conn)
     conn.execute("""CREATE TABLE IF NOT EXISTS management_entities (
         id TEXT PRIMARY KEY, kind TEXT NOT NULL, data TEXT NOT NULL,
         version INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL,
@@ -215,15 +229,21 @@ class ManagementService:
             recovery = conn.execute("SELECT COUNT(*) FROM management_plans WHERE status IN ('applying','recovery_required')").fetchone()[0]
         return {"counts": counts, "recovery_required": recovery, "credential_backend": "macos_keychain", "compute_authorized_by_management": False,
                 "oauth": {"status": "configurable_pkce", "reason": "Requires an explicitly registered official public client and exact local callback"},
-                "capabilities": {"plan_apply_readback": True, "secret_free_export": True, "automatic_host_reload": False, "mcp_tools_probe": True}}
+                "capabilities": {"independent_workbench": True, "plan_apply_readback": True, "secret_free_export": True, "automatic_host_reload": False, "mcp_tools_probe": True}}
+
+    def host_config(self, host_id, *, display=False):
+        from app.services.host_config_roots import resolve
+        return resolve(self, host_id, HOSTS[host_id], {} if self.isolated_home else os.environ, display=display)
 
     def hosts(self) -> list[dict]:
         from app.services import host_registry
         registry = {entry["id"]: entry for entry in host_registry.discover_hosts(home=self.home, env={} if self.isolated_home else dict(os.environ))}
         result = []
         for host_id, host in HOSTS.items():
-            host = effective_host(host, self.home)
+            host = self.host_config(host_id, display=True)
             result.append({"id": host_id, "name": host["name"], "surface": "cli" if host_id in ("codex", "claude-code", "opencode", "omp", "gemini-cli", "grok-build", "kimi-code", "minimax-code", "pi", "antigravity-cli") else "desktop_or_service",
+                           "shared_configuration": host['shared_configuration'],
+                           **({"config_root": host["config_root"]} if "config_root" in host else {}),
                            "configuration_status": "supported_format" if any(host.get(key) for key in ("mcp_path", "provider_path", "skill_dir", "prompt_path")) else "unsupported",
                            "verification_status": "not_verified", "unsupported_reason": host.get("unsupported_reason"), "provider_unsupported_reason": host.get("provider_unsupported_reason"), "provider_mode": host.get("provider_mode", "coexist_named_entries"),
                            "configuration_notice": host.get("configuration_notice"), "prompt_notice": host.get("prompt_notice"), "format_sources": host.get("sources", []),
@@ -267,6 +287,18 @@ class ManagementService:
                 item["discovery"] = {"mode": "metadata", "execution_performed": False, "history_read": False, "credentials_read": False, "health": "not_probed", "authorization": "required", "evidence": evidence}
                 item["observations"] = []
                 item["context_status"] = "unsupported"
+        codex = next(item for item in result if item["id"] == "codex")
+        if codex["shared_configuration"]:
+            # Existing Desktop activations must keep their original owner and
+            # restore point when opened through the unified Codex workspace.
+            with self.connect() as conn:
+                active_owner = conn.execute(
+                    "SELECT owner FROM management_owned WHERE path=? AND item_key=?",
+                    (codex["paths"]["mcp_path"], self.transactions._item_key({"kind": "toml_selection", "pointer": ["model"]})),
+                ).fetchone()
+            codex["shared_provider_target"] = (
+                "codex-desktop" if active_owner and active_owner["owner"] == "activation:codex-desktop" else "codex"
+            )
         return result
 
     def _row(self, row) -> dict:
@@ -309,8 +341,11 @@ class ManagementService:
             if kind == 'provider':
                 with self.connect() as conn:
                     agents += [row[0] for row in conn.execute("SELECT DISTINCT json_extract(data,'$.host_id') FROM management_entities WHERE kind='binding' AND json_extract(data,'$.provider_id')=?", (entity_id,))]
-        agents = list(dict.fromkeys(agent for agent in agents if agent in HOSTS and agent != host_id))
-        if selected:
+        from app.services.host_config_roots import shared_membership
+
+        removed = shared_membership(self, host_id, kind, old.get("kind")) if not selected else ()
+        agents = list(dict.fromkeys(agent for agent in agents if agent in HOSTS and agent not in removed))
+        if selected and host_id not in agents:
             agents.append(host_id)
         patch = {'agent_ids': agents}
         if kind == 'bundle' and selected:
@@ -363,18 +398,15 @@ class ManagementService:
         if host_id not in HOSTS:
             raise ConfigurationError("Unknown host", 422)
         provider = self.get("provider", provider_id)
-        if auto_apply and host_id not in (provider.get("agent_ids") or []):
-            self.assign_agent("provider", provider_id, host_id, True, provider.get("version"))
-        selection = self.host_state(host_id).get("selection") or {}
+        state = self.host_state(host_id)
+        selection = state.get("selection") or {}
+        target_state = state.get("resources", {}).get(provider_id, {}).get("status")
+        if (selection.get("provider_id") and selection.get("status") in ('missing', 'externally_changed')) or target_state in ('missing', 'externally_changed'):
+            raise ConfigurationError('Managed configuration was externally edited or removed; review the native file before switching', 409)
         resolved_model = model_id or (selection.get("model_id") if selection.get("provider_id") == provider_id else None)
         if not resolved_model and auto_apply:
-            provider_models = [m for m in self.list("model") if m.get("provider_id") == provider_id]
-            default_mapped = (provider.get("model_map") or {}).get("default") or next(iter((provider.get("model_map") or {}).values()), None)
-            if provider_models:
-                matched = next((m["id"] for m in provider_models if default_mapped and m.get("model_id") == default_mapped), None)
-                resolved_model = matched or provider_models[0]["id"]
-            elif isinstance(default_mapped, str) and default_mapped.strip():
-                resolved_model = default_mapped.strip()
+            summary = self.catalog_page('provider', entity_ids=[provider_id])
+            resolved_model = summary['items'][0].get('default_model')
         if not resolved_model:
             raise ConfigurationError("Select an explicit model before previewing a provider switch", 422)
         request = {"host_id": host_id, "provider_id": provider_id,
@@ -382,14 +414,34 @@ class ManagementService:
         if host_id == "claude-code" and selection.get("provider_id") and selection["provider_id"] != provider_id:
             request["replace_provider_id"] = selection["provider_id"]
         plan = self.plan(request)
+        metadata = plan["payload"]["metadata"]
+        choice = metadata.get('model_selection', {})
+        account_changed = selection.get('provider_id') == provider_id and any(
+            selection.get(field) != choice.get(field) for field in ('account_id', 'credential_source')
+        )
+        review_needed = account_changed or target_state == 'update_available' or bool(state.get("env_conflicts")) or selection.get("connection_mode", "direct") != "direct" or bool(
+            metadata.get("shared_configuration") and selection.get("status") != "verified"
+        ) or any(
+            item.get("before_hash") is not None and any(
+                spec.get("takeover_selected_field") and not spec.get("original_ownership")
+                for spec in item.get("specs", [])
+            )
+            for item in plan["payload"]["files"]
+        )
+        if auto_apply and review_needed:
+            return {"ok": True, "status": "review_required", "host_id": host_id, "provider_id": provider_id,
+                    "model_id": resolved_model, "plan_id": plan["id"], "plan": plan}
         if auto_apply:
             try:
                 applied = self.apply(plan["id"], plan["version"], True)
                 return {"ok": True, "status": "applied", "host_id": host_id, "provider_id": provider_id,
                         "model_id": resolved_model, "plan_id": applied["id"], "plan": applied}
             except ConfigurationError as exc:
-                return {"ok": True, "status": "conflict_preview", "conflict_error": str(exc), "host_id": host_id,
-                        "provider_id": provider_id, "model_id": resolved_model, "plan_id": plan["id"], "plan": plan}
+                latest = self.transactions.get(plan["id"])
+                if latest["status"] != "planned" or exc.status_code != 409:
+                    raise
+                return {"ok": False, "status": "conflict_preview", "conflict_error": str(exc), "host_id": host_id,
+                        "provider_id": provider_id, "model_id": resolved_model, "plan_id": plan["id"], "plan": latest}
         return {"ok": True, "status": "planned", "host_id": host_id, "provider_id": provider_id,
                 "model_id": resolved_model, "plan_id": plan["id"], "plan": plan}
 
@@ -398,12 +450,11 @@ class ManagementService:
         """Prepare an owned-resource install/removal; when auto_apply=True, apply immediately unless a conflict occurs."""
         if type(enabled) is not bool:
             raise ConfigurationError("enabled must be a boolean", 422)
-        if auto_apply and enabled:
-            asset = self.get("asset", asset_id)
-            if host_id not in (asset.get("agent_ids") or []):
-                self.assign_agent("asset", asset_id, host_id, True, asset.get("version"))
         operation = "install" if enabled else "uninstall"
         plan = self.plan({"host_id": host_id, "asset_ids": [asset_id], "operation": operation})
+        if auto_apply and plan['payload']['metadata'].get('native_takeover'):
+            return {"ok": True, "status": "review_required", "host_id": host_id, "asset_id": asset_id,
+                    "enabled": enabled, "operation": operation, "plan_id": plan["id"], "plan": plan}
         if auto_apply:
             try:
                 applied = self.apply(plan["id"], plan["version"], True)
@@ -444,7 +495,7 @@ class ManagementService:
                     else:
                         result = {"ok": True, "status": "planned", "host_id": host_id, "plan_id": plan["id"], "plan": plan}
                 results[host_id] = result
-                if result.get("status") == "conflict_preview":
+                if result.get("status") in ("conflict_preview", "review_required"):
                     conflicts.append(host_id)
                 else:
                     planned.append(host_id)
@@ -471,6 +522,7 @@ class ManagementService:
 
     def _public(self, data: dict) -> dict:
         value = copy.deepcopy(data)
+        value.pop("cc_switch_current_hosts", None)
         if value.get('kind') == 'oauth':
             from app.services.provider_credentials import account_status
             if value.get('status') == 'authorizing' and value.get('authorization_expires_at') is None and value.get('oauth_flow'):
@@ -589,6 +641,8 @@ class ManagementService:
                 raise ConfigurationError("Asset kind must be mcp, skill or prompt", 422)
             if value["kind"] == "mcp":
                 self._validate_mcp(value.get("config", {}))
+                from app.services.mcp_bindings import settings as mcp_settings
+                mcp_settings(self, value)
             if value["kind"] == "prompt" and (not isinstance(value.get("content"), str) or len(value["content"]) > 200000):
                 raise ConfigurationError("Prompt content must be text under 200000 characters", 422)
             if value["kind"] == "skill":
@@ -601,7 +655,18 @@ class ManagementService:
             value.setdefault("source", {"type": "manual"})
         if kind == "bundle":
             self._check_project(value.get("project_id"))
-            for asset_id in value.setdefault("asset_ids", []):
+            for field in ('host_ids', 'asset_ids'):
+                identifiers = value.setdefault(field, [])
+                if not isinstance(identifiers, list) or any(not isinstance(key, str) for key in identifiers):
+                    raise ConfigurationError("Profile references must be lists of identifiers", 422)
+                value[field] = list(dict.fromkeys(identifiers))
+            if type(value.get("replace_previous_assets", False)) is not bool:
+                raise ConfigurationError("Invalid profile switching policy", 422)
+            if value.get("model_id"):
+                model = self.get("model", value["model_id"])
+                if model["provider_id"] != value.get("provider_id"):
+                    raise ConfigurationError("Profile model belongs to a different provider", 422)
+            for asset_id in value["asset_ids"]:
                 self.get("asset", asset_id)
             for host in value.setdefault("host_ids", []):
                 if host not in HOSTS:
@@ -669,6 +734,16 @@ class ManagementService:
         if kind == "account" and data.get("status") in ("authorizing", "authorized", "refreshing", "error"):
             raise ConfigurationError("Account authorization state is controlled by the official flow", 422)
         merged = {**old, **data} if old else data
+        if kind == 'asset' and old and old.get('kind') == 'mcp':
+            from app.services.mcp_bindings import requires_review
+            if requires_review(old):
+                if data.get('mcp_reviewed') is True and 'config' in data:
+                    for key in ('native_review_required', 'credential_reattach_required', 'mcp_fields_to_review'):
+                        merged.pop(key, None)
+                else:
+                    merged['native_review_required'] = True
+        if kind == 'asset':
+            merged = {k: v for k, v in merged.items() if k != 'mcp_reviewed'}
         if old and kind in ("asset", "account") and data.get("kind", old["kind"]) != old["kind"]:
             raise ConfigurationError("Object kind is immutable; create a separate object", 422)
         # Credential refs may only be created by this service or inherited.
@@ -905,9 +980,6 @@ class ManagementService:
                 value.pop("credential_ref", None)
                 value.pop("has_credential", None)
                 value.pop("previous_credential_cleanup", None)
-                value.pop("cc_switch_current_hosts", None)
-                if isinstance(value.get("source"), dict) and value["source"].get("type") == "cc-switch":
-                    value["source"] = {"type": "local-sync"}
                 if collection == "account":
                     for private_metadata in ("oauth_flow", "token_type", "expires_at", "authorization_expires_at"):
                         value.pop(private_metadata, None)
@@ -920,6 +992,14 @@ class ManagementService:
                         value["config"] = cleaned_cfg
                         if had_creds:
                             value["credential_reattach_required"] = True
+                        bound = value.pop('mcp_account_bindings', [])
+                        if bound or had_creds:
+                            fields = [{key: record[key] for key in ('location', 'name', 'bearer')} for record in bound]
+                            fields += [{'location': location, 'name': name, 'bearer': raw.startswith('Bearer ')}
+                                       for location in ('headers', 'env') for name, raw in obj['config'].get(location, {}).items()
+                                       if isinstance(raw, str) and SECRET_REF.search(raw)]
+                            value['mcp_fields_to_review'] = fields
+                            value['credential_reattach_required'] = True
                     elif SECRET_REF.search(canonical(value)):
                         value = json.loads(SECRET_REF.sub("", canonical(value)))
                         value["credential_reattach_required"] = True
@@ -1129,103 +1209,9 @@ class ManagementService:
                 return {"imported": [self.save("asset", {**scope, "kind": "skill", "name": payload.get("name") or inferred_name, "install_mode": payload["install_mode"], "files": files, "source": {"type": "zip"}}, payload.get("target_id"), payload.get("expected_version"))], "unsupported": []}
             except (ValueError, TypeError, zipfile.BadZipFile, UnicodeDecodeError, RuntimeError):
                 raise ConfigurationError("Invalid or unsafe Skill ZIP", 422) from None
-        if format_name in ("cc-switch", "local-sync", "compatible"):
-            # Explicit supplied copy only. Never read external auth storage.
-            if not isinstance(raw, dict):
-                raise ConfigurationError("Supply a compatible config JSON copy", 422)
-            source_type = "cc-switch" if format_name == "cc-switch" else "local-sync"
-            rejected = []
-            objects = []
-            supported_cc_keys = {"mcpServers", "providers", "prompts", "skills"}
-            for name, config in (raw.get("mcpServers") or {}).items():
-                if isinstance(config, dict):
-                    objects.append({"entity_kind": "asset", "data": {"name": name, "kind": "mcp", "config": {"transport": "http" if config.get("url") else "stdio", **config}, "source": {"type": source_type}}})
-            raw_providers = raw.get("providers")
-            if isinstance(raw_providers, dict):
-                raw_providers = [{"name": k, **(v if isinstance(v, dict) else {})} for k, v in raw_providers.items()]
-            if isinstance(raw_providers, list):
-                for idx, prov in enumerate(raw_providers):
-                    if isinstance(prov, dict):
-                        p_name = str(prov.get("name") or prov.get("id") or f"Provider {idx + 1}")
-                        p_proto = str(prov.get("protocol") or prov.get("api_type") or "openai").lower()
-                        if p_proto not in ("openai", "anthropic", "gemini"):
-                            p_proto = "anthropic" if "claude" in p_proto or "anthropic" in p_proto else ("gemini" if "gemini" in p_proto else "openai")
-                        p_url = str(prov.get("base_url") or prov.get("endpoint") or prov.get("api_url") or "https://api.openai.com/v1")
-                        raw_map = prov.get("model_map") if isinstance(prov.get("model_map"), dict) else {}
-                        model_map = {
-                            str(k).strip(): str(v).strip()
-                            for k, v in raw_map.items()
-                            if isinstance(k, str) and isinstance(v, str) and k.strip() and v.strip()
-                        }
-                        for m_field in ("model", "default_model", "model_id"):
-                            m_val = prov.get(m_field)
-                            if isinstance(m_val, str) and m_val.strip():
-                                model_map.setdefault(m_val.strip(), m_val.strip())
-                        if isinstance(prov.get("models"), list):
-                            for m_item in prov["models"]:
-                                if isinstance(m_item, str) and m_item.strip():
-                                    model_map.setdefault(m_item.strip(), m_item.strip())
-                                elif isinstance(m_item, dict):
-                                    mid = m_item.get("model_id") or m_item.get("id") or m_item.get("name")
-                                    if isinstance(mid, str) and mid.strip():
-                                        model_map.setdefault(mid.strip(), mid.strip())
-                        p_data: dict[str, Any] = {
-                            "name": p_name,
-                            "protocol": p_proto,
-                            "base_url": p_url,
-                            "enabled": bool(prov.get("enabled", True)),
-                            "sort_index": prov.get("sort_index", idx) if type(prov.get("sort_index", idx)) is int else idx,
-                            "model_map": model_map,
-                        }
-                        if isinstance(prov.get("wire_api"), str) and prov["wire_api"] in ("chat", "responses") and p_proto == "openai":
-                            p_data["wire_api"] = prov["wire_api"]
-                        if isinstance(prov.get("supported_endpoints"), list):
-                            p_data["supported_endpoints"] = prov["supported_endpoints"]
-                        objects.append({
-                            "entity_kind": "provider",
-                            "data": p_data,
-                        })
-            raw_prompts = raw.get("prompts")
-            if isinstance(raw_prompts, dict):
-                raw_prompts = [{"name": k, **(v if isinstance(v, dict) else {"content": str(v)})} for k, v in raw_prompts.items()]
-            if isinstance(raw_prompts, list):
-                for idx, prm in enumerate(raw_prompts):
-                    if isinstance(prm, dict):
-                        objects.append({
-                            "entity_kind": "asset",
-                            "data": {
-                                "name": str(prm.get("name") or f"Prompt {idx + 1}"),
-                                "kind": "prompt",
-                                "content": str(prm.get("content") or prm.get("prompt") or ""),
-                                "description": str(prm.get("description") or ""),
-                                "source": {"type": source_type},
-                            },
-                        })
-            raw_skills = raw.get("skills")
-            if isinstance(raw_skills, dict):
-                raw_skills = [{"name": k, **(v if isinstance(v, dict) else {"content": str(v)})} for k, v in raw_skills.items()]
-            if isinstance(raw_skills, list):
-                for idx, skl in enumerate(raw_skills):
-                    if isinstance(skl, dict):
-                        files = skl.get("files") if isinstance(skl.get("files"), dict) else {"SKILL.md": str(skl.get("content") or f"# {skl.get('name') or 'Skill'}\n")}
-                        objects.append({
-                            "entity_kind": "asset",
-                            "data": {
-                                "name": str(skl.get("name") or f"Skill {idx + 1}"),
-                                "kind": "skill",
-                                "install_mode": str(skl.get("install_mode") or "copy"),
-                                "files": files,
-                                "source": {"type": source_type},
-                            },
-                        })
-            for key in raw:
-                if key not in supported_cc_keys:
-                    rejected.append({"field": key, "reason": "Unsupported config field/version; not silently migrated"})
-            raw = {"objects": objects}
-        else:
-            rejected = []
-            if format_name != "senrelay":
-                raise ConfigurationError("Unsupported import format", 422)
+        rejected = []
+        if format_name != "senrelay":
+            raise ConfigurationError("Unsupported import format", 422)
         if not isinstance(raw, dict) or not isinstance(raw.get("objects"), list) or len(raw["objects"]) > 200:
             raise ConfigurationError("Import requires at most 200 explicit objects", 422)
         imported, id_map = [], {}
@@ -1237,6 +1223,8 @@ class ManagementService:
                 reference = entry['data'].get(key)
                 if reference is not None and (not isinstance(reference, str) or len(reference) > 100):
                     raise ConfigurationError('Imported references must be resource identifiers', 422)
+            if entry['data'].get('mcp_account_bindings'):
+                raise ConfigurationError('Reattach MCP accounts locally after import', 422)
             reject_secrets(entry)
             if "keychain:senrelay:" in canonical(entry):
                 raise ConfigurationError("Imported credentials must be reattached locally", 422)
@@ -1388,6 +1376,10 @@ class ManagementService:
     def plan(self, request: dict) -> dict:
         from app.services.host_routing import HostRouting
         routing = HostRouting(self)
+        if request.get('bundle_id') and request.get('operation', 'install') == 'install':
+            bundle = self.get('bundle', request['bundle_id'])
+            if bundle.get('model_id') and 'activate_provider' not in request:
+                request = {**request, 'activate_provider': True, 'model_id': bundle['model_id']}
         profile = routing.private_state(request.get("host_id"))
         if profile.get('pending'):
             raise ConfigurationError('Recover the pending assistant connection change first', 409)
@@ -1402,7 +1394,7 @@ class ManagementService:
         host_id = request.get("host_id")
         if host_id not in HOSTS:
             raise ConfigurationError("Unknown host", 422)
-        host = effective_host(HOSTS[host_id], self.home)
+        host = self.host_config(host_id)
         operation = request.get("operation", "install")
         if operation not in ("install", "uninstall"):
             raise ConfigurationError("Operation must be install, uninstall or restore", 422)
@@ -1423,10 +1415,37 @@ class ManagementService:
         model_selection = None
         provider_dependencies = {}
         versions = {bundle["id"]: bundle["version"]} if request.get("bundle_id") else {}
+        profile_options = {}
+        if request.get('bundle_id'):
+            profile_options['bundle_assets'] = asset_ids if operation == 'install' else []
+        if request.get('bundle_id') and operation == 'install' and bundle.get('replace_previous_assets'):
+            with self.connect() as conn:
+                prior = conn.execute("""SELECT json_extract(data,'$.bundle_plan_id'),json_extract(data,'$.bundle_exclusive_assets')
+                    FROM management_activations WHERE host_id=?""", (host_id,)).fetchone()
+            profile_options['previous_bundle_plan'] = prior[0] if prior else None
+            previous = json.loads(prior[1]) if prior and prior[1] else []
+            profile_options['previous_exclusive_assets'] = previous
+            removed = [key for key in previous if key not in asset_ids]
+            profile_options['removed_assets'] = removed
+            for key in removed:
+                try:
+                    asset = self.get('asset', key)
+                except ConfigurationError as exc:
+                    if exc.status_code == 404:
+                        continue  # An already uninstalled and deleted resource has no remaining managed entry.
+                    raise
+                versions[key] = asset['version']
+                configuration_changes.append({'name': asset['name'], 'kind': asset['kind'], 'operation': 'uninstall'})
+                specs.extend(self._asset_specs(host_id, host, asset, 'uninstall'))
         for asset_id in asset_ids:
             asset = self.get("asset", asset_id)
             versions[asset_id] = asset["version"]
             configuration_changes.append({'name': asset['name'], 'kind': asset['kind'], 'operation': operation})
+            if asset.get('mcp_account_bindings') and operation == 'install':
+                from app.services.mcp_bindings import settings as mcp_settings
+                _, bound = mcp_settings(self, asset)
+                versions.update(bound)
+                provider_dependencies[asset_id] = list(bound)
             specs += self._asset_specs(host_id, host, asset, operation)
         if provider_id:
             provider = copy.deepcopy(provider_override) if provider_override else self.get("provider", provider_id)
@@ -1469,6 +1488,31 @@ class ManagementService:
             if dependencies:
                 provider_dependencies[provider_id] = list(dependencies)
             provider_specs = self._provider_specs(host_id, host, provider, operation, replacing_selected=request.get("activate_provider") is True)
+            if host_id == 'claude-code' and operation == 'install':
+                path = str(self.home / host['provider_path'])
+                raw = self.transactions._read(Path(path))
+                try:
+                    existing = (json.loads(raw).get('env') or {}) if raw else {}
+                    if not isinstance(existing, dict):
+                        raise ValueError
+                except (ValueError, AttributeError):
+                    raise ConfigurationError('Native environment is not a valid object', 422) from None
+                for key in ('ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY', 'ANTHROPIC_CUSTOM_HEADERS'):
+                    if not existing.get(key) or (key == 'ANTHROPIC_AUTH_TOKEN' and provider.get('credential_ref')):
+                        continue
+                    pointer = ['env', key]
+                    prior = self.transactions._owned(path, 'json:' + canonical(pointer))
+                    if key == 'ANTHROPIC_AUTH_TOKEN' and prior and (
+                        prior['owner'] == 'activation:' + host_id or prior['owner'] == request.get('replace_provider_id')
+                    ):
+                        # The existing owned-token removal path handles this field.
+                        continue
+                    if request.get('activate_provider') is not True:
+                        raise ConfigurationError('Existing native authentication needs an explicit model activation and reviewed snapshot', 409)
+                    # Shadow an unbound credential with an empty native env
+                    # value. The original is kept only in the private snapshot.
+                    provider_specs.append({'path': path, 'kind': 'json', 'pointer': pointer, 'value': '',
+                                           'owner': 'activation:' + host_id, 'operation': 'install'})
             if choice and choice['projection']:
                 for spec in provider_specs:
                     spec['credential_projection'] = {choice['reference']: choice['projection']}
@@ -1476,7 +1520,10 @@ class ManagementService:
                 if operation != "install":
                     raise ConfigurationError("Activation is an explicit install operation", 422)
                 native_model = self._selected_model(provider, request.get("model_id"))
-                model_selection = {'provider_name': provider['name'], 'native_model': native_model}
+                model_selection = {'provider_name': provider['name'], 'native_model': native_model, 'protocol': provider['protocol'],
+                                   'credential_source': choice['source'] if choice else None,
+                                   'account_id': (choice.get('account') or {}).get('id') if choice else None,
+                                   'account_name': (choice.get('account') or {}).get('name') if choice else None}
                 if host_id == "claude-code":
                     # The reviewed activation owns exactly these native fields,
                     # retaining their original values only in private snapshots.
@@ -1496,7 +1543,7 @@ class ManagementService:
                 elif host_id in ("codex", "codex-desktop"):
                     name = "senrelay_" + provider_id.replace("provider_", "")
                     for key, value in (("model_provider", name), ("model", native_model)):
-                        provider_specs.append({"path": str(self.home / ".codex/config.toml"), "kind": "toml_selection", "pointer": [key], "value": value, "owner": "activation:" + host_id, "operation": "install", "takeover_selected_field": True, "activation_field": True})
+                        provider_specs.append({"path": str(self.home / host["mcp_path"]), "kind": "toml_selection", "pointer": [key], "value": value, "owner": "activation:" + host_id, "operation": "install", "takeover_selected_field": True, "activation_field": True})
                 elif host_id == "opencode":
                     provider_specs.append({"path": str(self.home / host["provider_path"]), "kind": "json", "pointer": ["model"], "value": provider_id + "/" + native_model, "owner": "activation:" + host_id, "operation": "install", "takeover_selected_field": True, "activation_field": True})
                 elif host_id == "omp":
@@ -1525,14 +1572,15 @@ class ManagementService:
         if request.get("bundle_id"):
             for spec in specs:
                 spec["bundle_field"] = True
-        return specs, {"host_id": host_id, "operation": operation, "entity_versions": versions, 'provider_dependencies': provider_dependencies,
+        return specs, {"host_id": host_id, "operation": operation,
+            "native_takeover": any(spec.get('native_origin') for spec in specs), "entity_versions": versions, 'provider_dependencies': provider_dependencies,
             'configuration_changes': configuration_changes, **({'model_selection': model_selection} if model_selection else {}),
             "configuration_notice": host.get("configuration_notice"),
-            "shared_configuration": host_id in ("codex", "codex-desktop"),
+            "shared_configuration": host['shared_configuration'], **({'root_scope': host['root_scope']} if 'root_scope' in host else {}),
             "selection_config_only": host_id in ("omp", "codex-desktop"),
             **({"native_paths": {key: host[key] for key in ("provider_path", "selection_path")}} if host_id == "omp" and provider_id else {}),
             "prompt_notice": host.get("prompt_notice") if any(change["kind"] == "prompt" for change in configuration_changes) else None,
-            "bundle_id": request.get("bundle_id"), "scope": "selected_host_global", "activate_provider": request.get("activate_provider") is True, "provider_id": provider_id, "model_id": native_model if request.get("activate_provider") is True else None}
+            "bundle_id": request.get("bundle_id"), **profile_options, "scope": "selected_host_global", "activate_provider": request.get("activate_provider") is True, "provider_id": provider_id, "model_id": native_model if request.get("activate_provider") is True else None}
 
     def _selected_model(self, provider: dict, model_id: str | None) -> str:
         if not isinstance(model_id, str) or not model_id:
@@ -1545,6 +1593,12 @@ class ManagementService:
             if model["provider_id"] != provider["id"]:
                 raise ConfigurationError("Selected model belongs to another provider", 422)
             return model["model_id"]
+        with self.connect() as conn:
+            saved = conn.execute("""SELECT 1 FROM management_entities WHERE kind='model'
+                AND json_extract(data,'$.provider_id')=? AND json_extract(data,'$.model_id')=? LIMIT 1""",
+                (provider["id"], model_id)).fetchone()
+        if saved:
+            return model_id
         mappings = provider.get("model_map", {})
         if model_id in mappings:
             return mappings[model_id]
@@ -1560,7 +1614,7 @@ class ManagementService:
                 raise ConfigurationError(HOSTS[host_id]["provider_unsupported_reason"], 422)
             raise ConfigurationError("This host has no Senrelay activation baseline", 404)
         activation = json.loads(row[0])
-        host = effective_host(HOSTS[host_id], self.home)
+        host = self.host_config(host_id)
         if host_id == "omp":
             for key, native_owner in (("provider_path", activation.get("provider_id")), ("selection_path", "activation:omp")):
                 selected = self.home / host[key]
@@ -1576,7 +1630,7 @@ class ManagementService:
         specs = []
         for field in activation["fields"]:
             baseline = activation["files"][field["path"]]
-            format_name = "toml" if field["kind"] == "toml_selection" else field["kind"] if field["kind"] in ("yaml", "json5", "file", "block") else "json"
+            format_name = "toml" if field["kind"] in ("toml_selection", "toml_table") else field["kind"] if field["kind"] in ("yaml", "json5", "file", "block") else "json"
             source = {"snapshot": baseline["snapshot"], "hash": baseline["hash"], "pointer": field.get("pointer", []), "format": format_name}
             if field.get("marker"):
                 source["marker"] = field["marker"]
@@ -1600,7 +1654,7 @@ class ManagementService:
             specs.append(spec)
         return self.transactions.create(specs, {"host_id": host_id, "operation": "restore", "activation_restore": True, "entity_versions": {}, "activation_hash": hashlib.sha256(canonical(activation).encode()).hexdigest(),
             **({"native_paths": {key: host[key] for key in ("provider_path", "selection_path")}} if host_id == "omp" and any(field["path"] in {str(self.home / host[key]) for key in ("provider_path", "selection_path")} for field in activation["fields"]) else {}),
-            "shared_configuration": host_id in ("codex", "codex-desktop"), "configuration_notice": host.get("configuration_notice"), "prompt_notice": host.get("prompt_notice")})
+            "shared_configuration": host['shared_configuration'], **({'root_scope': host['root_scope']} if 'root_scope' in host else {}), "configuration_notice": host.get("configuration_notice"), "prompt_notice": host.get("prompt_notice")})
 
     async def probe_asset(self, asset_id: str, confirmed: bool, transport=None, *, expected_version=None) -> dict:
         if confirmed is not True:
@@ -1610,7 +1664,10 @@ class ManagementService:
             raise ConfigurationError("MCP definition changed after review; reload before probing", 409)
         if asset["kind"] != "mcp":
             raise ConfigurationError("Only MCP assets support tools discovery", 422)
-        config = asset["config"]
+        from app.services.mcp_bindings import requires_review, settings as mcp_settings
+        if requires_review(asset):
+            raise ConfigurationError('Review and save the MCP configuration before probing', 409)
+        config, _ = mcp_settings(self, asset, resolve=True)
         if config.get("transport", "stdio") in ("stdio", "sse"):
             return await self._probe_sdk(asset_id, config)
         import httpx
@@ -1748,17 +1805,9 @@ class ManagementService:
         return self.save("asset", json.loads(row["data"]), asset_id, expected_version)
 
     def discover_assets(self, host_id: str | None = None) -> dict:
-        if host_id is None:
-            results = []
-            for hid in HOSTS:
-                try:
-                    results.append(self.discover_assets(hid))
-                except Exception:
-                    pass
-            return {"results": results}
         if host_id not in HOSTS:
             raise ConfigurationError("Unknown host", 422)
-        host = HOSTS[host_id]
+        host = self.host_config(host_id)
         if not host.get("mcp_path"):
             return {"host_id": host_id, "status": "unsupported", "candidates": [], "reason": host.get("unsupported_reason")}
         path = self.home / host["mcp_path"]
@@ -1803,16 +1852,36 @@ class ManagementService:
         return {"host_id": host_id, "status": "parsed", "source_path": str(path), "candidates": candidates, "host_loaded": "not_verified"}
 
     def _asset_specs(self, host_id: str, host: dict, asset: dict, operation: str) -> list[dict]:
+        from app.services import native_asset_origin
         owner = asset["id"]
+        native = native_asset_origin.plan_target(self, host_id, asset, operation)
+        if native and asset['kind'] == 'prompt':
+            validate_prompt(host_id, asset['content'])
+            return [{**native, 'value': asset['content'], 'asset_kind': 'prompt'}]
         if asset["kind"] == "mcp":
+            from app.services.mcp_bindings import requires_review, settings as mcp_settings
+            if operation == 'install' and requires_review(asset):
+                raise ConfigurationError('Review and save the MCP configuration to supply omitted native environment or headers', 409)
             if not host.get("mcp_path"):
                 raise ConfigurationError(host.get("unsupported_reason", "MCP format is unsupported"), 422)
-            config = copy.deepcopy(asset["config"])
+            config = mcp_settings(self, asset, resolve=True)[0] if operation == 'install' else copy.deepcopy(asset["config"])
             name = "senrelay_" + owner.replace("asset_", "")
             path = str(self.home / host["mcp_path"])
             self.transactions.safe_path(path)
+            if native and native['kind'] == 'toml_table':
+                transport = config.pop('transport', 'stdio')
+                if host_id in ('codex', 'codex-desktop') and transport == 'sse':
+                    raise ConfigurationError('Codex SSE configuration is unsupported', 422)
+                if transport == 'http' and host_id in ('codex', 'codex-desktop') and 'headers' in config:
+                    config['http_headers'] = config.pop('headers')
+                return [{**native, 'value': config}]
             if host_id in HOST_FORMATS:
-                return render_mcp_specs(host_id, host, config, name=name, owner=owner, operation=operation, home=self.home)
+                specs = render_mcp_specs(host_id, host, config, name=name, owner=owner, operation=operation, home=self.home)
+                if native:
+                    if len(specs) != 1 or specs[0]['kind'] != 'json':
+                        raise ConfigurationError('Native named entry requires a lossless in-place renderer', 409)
+                    return [{**specs[0], **native}]
+                return specs
             transport = config.pop("transport", "stdio")
             if host_id in ("codex", "codex-desktop"):
                 if transport == "sse":
@@ -1833,7 +1902,8 @@ class ManagementService:
                 if host_id == "antigravity":
                     config["serverUrl"] = config.pop("url")
                     config.pop("type", None)
-            return [{"path": path, "kind": "json", "pointer": [host["container"], name], "owner": owner, "operation": operation, "value": config}]
+            return [{"path": path, "kind": "json", "pointer": [host["container"], name], "owner": owner,
+                     "operation": operation, "value": config, **(native or {})}]
         if asset["kind"] == "prompt":
             if host.get("prompt_mode") == "manual_skill":
                 return [cursor_prompt_spec(host, asset, home=self.home, operation=operation)]
@@ -1886,7 +1956,9 @@ class ManagementService:
                 raise ConfigurationError("Claude Code requires an Anthropic protocol endpoint", 422)
             if operation == 'install':
                 require_endpoint(provider, 'messages')
-            values = {"ANTHROPIC_BASE_URL": provider["base_url"]}
+            # Claude Code appends /v1/messages to its SDK root. Senrelay
+            # presets and provider checks use the versioned API base.
+            values = {"ANTHROPIC_BASE_URL": provider["base_url"].removesuffix("/v1")}
             if secret:
                 values["ANTHROPIC_AUTH_TOKEN"] = secret
             return [{"path": str(self.home / host["provider_path"]), "kind": "json", "pointer": ["env", key], "value": value, "owner": owner, "operation": operation} for key, value in values.items()]
@@ -1913,7 +1985,7 @@ class ManagementService:
             if secret:
                 fields["http_headers"] = {"Authorization": "Bearer " + secret}
             body = f"[model_providers.{name}]\n" + self._toml_fields(fields)
-            return [{"path": str(self.home / ".codex/config.toml"), "kind": "block", "marker": owner, "format": "toml", "value": body.rstrip(), "owner": owner, "operation": operation}]
+            return [{"path": str(self.home / host["mcp_path"]), "kind": "block", "marker": owner, "format": "toml", "value": body.rstrip(), "owner": owner, "operation": operation}]
         if host_id in HOST_FORMATS:
             return render_provider_specs(host_id, host, provider, operation, home=self.home, replacing_selected=replacing_selected)
         raise ConfigurationError("Provider configuration format is not verified for this host", 422)
@@ -1938,8 +2010,17 @@ class ManagementService:
     @audited_plan_operation
     def apply(self, plan_id: str, expected_version: int, confirmed: bool) -> dict:
         plan = self.transactions.get(plan_id)
+        from app.services.host_config_roots import check_plan
+        check_plan(self, plan)
         self.transactions.require_fresh(plan)
         metadata = plan["payload"]["metadata"]
+        if 'previous_bundle_plan' in metadata and plan['status'] != 'applied':
+            with self.connect() as conn:
+                prior = conn.execute("""SELECT json_extract(data,'$.bundle_plan_id'),json_extract(data,'$.bundle_exclusive_assets')
+                    FROM management_activations WHERE host_id=?""", (metadata['host_id'],)).fetchone()
+            exclusive = json.loads(prior[1]) if prior and prior[1] else []
+            if (prior[0] if prior else None) != metadata['previous_bundle_plan'] or exclusive != metadata.get('previous_exclusive_assets', []):
+                raise ConfigurationError('Configuration profile changed since preview')
         if metadata.get("native_paths") and plan["status"] != "applied":
             host = effective_host(HOSTS[metadata["host_id"]], self.home)
             if any(host.get(key) != value for key, value in metadata["native_paths"].items()):
@@ -1966,6 +2047,18 @@ class ManagementService:
         def finalize_activation(conn, applying_plan):
             metadata = applying_plan["payload"]["metadata"]
             host_id = metadata.get("host_id")
+            from app.services import management_undo
+            if metadata.get('undo_plan_id'):
+                management_undo.restore_receipt(conn, applying_plan)
+                return
+            management_undo.remember_before(conn, applying_plan)
+            for item in applying_plan['payload']['files']:
+                for spec in item['specs']:
+                    if spec.get('native_origin'):
+                        # Only an intentional removal grants permission to reinstall
+                        # an absent original. An external deletion must stay visible.
+                        conn.execute('UPDATE management_native_origins SET was_managed=? WHERE entity_id=?',
+                                     (int(spec['operation'] == 'uninstall'), spec['native_origin']))
             if metadata.get("activation_restore"):
                 conn.execute("DELETE FROM management_activations WHERE host_id=?", (host_id,))
             elif metadata.get("activate_provider") or metadata.get("bundle_id"):
@@ -1991,11 +2084,20 @@ class ManagementService:
                 if metadata.get('activate_provider'):
                     active["provider_id"] = metadata.get("provider_id")
                     active["model_id"] = metadata.get("model_id")
+                    active["model_selection"] = metadata.get("model_selection", {})
                     active.pop('selection_receipt_unknown', None)
+                if 'root_scope' in metadata:
+                    active['root_scope'] = metadata['root_scope']
                 active['selection_receipt_version'] = 1
-                active["bundle_id"] = metadata.get("bundle_id")
+                if metadata.get('bundle_id'):
+                    active["bundle_id"] = metadata['bundle_id'] if metadata.get('operation') == 'install' else None
+                    active["bundle_plan_id"] = applying_plan['id']
+                    from app.services.configuration_profiles import exclusive_resources
+                    active["bundle_exclusive_assets"] = exclusive_resources(active, applying_plan)
                 active["last_plan_id"] = applying_plan["id"]
                 conn.execute("INSERT OR REPLACE INTO management_activations VALUES(?,?,?)", (host_id, canonical(active), datetime.now(timezone.utc).isoformat()))
+            from app.services.configuration_profiles import release_independently_managed
+            release_independently_managed(conn, applying_plan)
             routing.finalize(conn, applying_plan)
 
         # Activation baselines are part of the configuration transaction's
@@ -2005,7 +2107,9 @@ class ManagementService:
         try:
             if pending:
                 self.transactions.vault = routing.apply_vault(plan, pending)
-            result = self.transactions.apply(plan_id, expected_version, confirmed, finalize=finalize_activation)
+            from app.services import management_undo
+            renderer = (lambda undo: management_undo.render(self, undo)) if metadata.get('undo_plan_id') else None
+            result = self.transactions.apply(plan_id, expected_version, confirmed, finalize=finalize_activation, renderer=renderer)
         finally:
             self.transactions.vault = original_vault
         if pending:
@@ -2016,6 +2120,8 @@ class ManagementService:
     @audited_plan_operation
     def recover_plan(self, plan_id, confirmed):
         from app.services.host_routing import HostRouting
+        from app.services.host_config_roots import check_plan
+        check_plan(self, self.transactions.get(plan_id))
         return HostRouting(self).recover(plan_id, confirmed)
 
     @configuration_locked
@@ -2024,923 +2130,11 @@ class ManagementService:
         return HostRouting(self).preview(host_id, body, origin)
 
     def connection_mode(self, host_id):
+        if host_id in HOSTS:
+            self.host_config(host_id)
         from app.services.host_routing import HostRouting
         return HostRouting(self).state(host_id)
 
-    def sync_local_environment(self) -> dict:
-        """Import compatible local configuration and host definitions. ok is true only when every attempted write and readable source succeeded."""
-        failures: list[dict[str, str]] = []
-        failure_count = 0
-
-        def record_failure(stage: str, name: str) -> None:
-            nonlocal failure_count
-            failure_count += 1
-            if len(failures) < 30:
-                failures.append({"stage": str(stage)[:40], "name": str(name)[:120]})
-
-        previous_save = self.save
-
-        def recording_save(kind, payload, *args, **kwargs):
-            try:
-                return previous_save(kind, payload, *args, **kwargs)
-            except Exception:
-                label = kind
-                if isinstance(payload, dict):
-                    label = payload.get("name") or payload.get("host_id") or kind
-                record_failure(str(kind), "" if label is None else str(label))
-                raise
-
-        self._sync_record_failure = record_failure
-        self.save = recording_save
-        try:
-            result = self._sync_local_environment_body()
-        finally:
-            self.save = previous_save
-            self._sync_record_failure = None
-        result["ok"] = failure_count == 0
-        result["failures"] = failures
-        result["failure_count"] = failure_count
-        return result
-
-    def _note_sync_failure(self, stage: str, name: str) -> None:
-        record = getattr(self, "_sync_record_failure", None)
-        if callable(record):
-            record(stage, name)
-
-    def _sync_local_environment_body(self) -> dict:
-        """One-click idempotent sync of compatible local configuration, host MCP configs, and local skills."""
-        existing_providers = {
-            (p["name"].strip().lower(), p["protocol"]): p
-            for p in self.list("provider")
-        }
-        existing_models = {
-            (m.get("provider_id"), m.get("model_id")): m
-            for m in self.list("model")
-        }
-        existing_assets = {
-            (a["kind"], a["name"].strip().lower()): a
-            for a in self.list("asset")
-        }
-        existing_bindings = {
-            (b.get("host_id"), b.get("provider_id") or "", b.get("project_id") or ""): b
-            for b in self.list("binding")
-        }
-        created_provider_ids: set[str] = set()
-        created_model_ids: set[str] = set()
-        created_asset_ids: set[str] = set()
-
-        cc_app_to_host = {
-            "claude": "claude-code",
-            "claude-desktop": "claude-desktop",
-            "claude_desktop": "claude-desktop",
-            "codex": "codex",
-            "gemini": "gemini-cli",
-            "opencode": "opencode",
-            "mcode": "minimax-code",
-            "agy": "antigravity-cli",
-            "grokbuild": "grok-build",
-            "openclaw": "openclaw",
-        }
-        default_endpoints = {
-            "anthropic": "https://api.anthropic.com",
-            "openai": "https://api.openai.com/v1",
-            "gemini": "https://generativelanguage.googleapis.com",
-        }
-        stats = {
-            "providers_synced": 0,
-            "models_synced": 0,
-            "mcp_synced": 0,
-            "prompts_synced": 0,
-            "skills_synced": 0,
-            "bindings_synced": 0,
-            "sources": [],
-        }
-
-        def safe_endpoint(url_val: str | None, proto: str) -> str:
-            fallback = default_endpoints.get(proto, "https://api.openai.com/v1")
-            if not isinstance(url_val, str) or not url_val.strip():
-                return fallback
-            try:
-                return self._endpoint(url_val.strip())
-            except Exception:
-                return fallback
-
-        cc_current_keys_in_run: set[tuple[str, str, str]] = set()
-        uuid_pattern = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
-
-        def friendly_provider_name(raw_name: Any, raw_id: Any, endpoint_url: str, models_map: dict[str, str], proto: str) -> str:
-            candidate = str(raw_name or "").strip()
-            if candidate and not uuid_pattern.match(candidate):
-                return candidate
-            parsed_host = urlsplit(safe_endpoint(endpoint_url, proto)).hostname or proto
-            default_m = str((models_map or {}).get("default") or next(iter((models_map or {}).values()), "")).strip()
-            if default_m:
-                return f"{parsed_host} ({default_m})"
-            return parsed_host or str(raw_id or "Provider")
-
-        def upsert_provider_record(
-            name: str,
-            protocol: str,
-            endpoint: str,
-            models: dict[str, str],
-            host_id: str | None,
-            sort_index: int | None = None,
-            has_key: bool = False,
-            raw_secret: str = "",
-            is_current: bool = False,
-            wire_api: str | None = None,
-            supported_endpoints: list[str] | None = None,
-            model_labels: dict[str, str] | None = None,
-            from_cc_switch: bool = False,
-            legacy_id: str | None = None,
-        ):
-            clean_name = name.strip()[:180]
-            if not clean_name:
-                return None
-            def safe_model_key(raw_key: str) -> str:
-                cleaned = str(raw_key).strip()[:120]
-                if SENSITIVE.search(cleaned):
-                    cleaned = SENSITIVE.sub("model", cleaned)
-                return cleaned or "default"
-
-            clean_models = {
-                safe_model_key(k): str(v).strip()[:180]
-                for k, v in (models or {}).items()
-                if isinstance(k, str)
-                and isinstance(v, str)
-                and k.strip()
-                and v.strip()
-                and not any(ch.isspace() for ch in v.strip())
-                and not SECRET_REF.search(v)
-            }
-            has_explicit_models = bool(clean_models)
-
-            default_supported = (
-                ["messages"]
-                if protocol == "anthropic"
-                else (["generateContent"] if protocol == "gemini" else ["chat/completions", "responses"])
-            )
-            declared_eps = list(dict.fromkeys((supported_endpoints or []) + default_supported))
-            effective_wire = (
-                wire_api
-                if protocol == "openai" and wire_api in ("responses", "chat")
-                else (
-                    "responses"
-                    if protocol == "openai" and host_id in ("codex", "codex-desktop", "grok-build")
-                    else ("chat" if protocol == "openai" else None)
-                )
-            )
-
-            key = (clean_name.lower(), protocol)
-            existing = existing_providers.get(key)
-            if not existing and legacy_id:
-                legacy_key = (legacy_id.strip().lower(), protocol)
-                if legacy_key in existing_providers:
-                    existing = existing_providers.pop(legacy_key)
-                    existing_providers[key] = existing
-            if from_cc_switch and is_current and host_id and host_id in HOSTS:
-                cc_current_keys_in_run.add((clean_name.lower(), protocol, host_id))
-            agent_list = [host_id] if host_id and host_id in HOSTS else []
-            if existing:
-                is_created_in_run = existing["id"] in created_provider_ids
-                existing_agents = existing.get("agent_ids")
-                if is_created_in_run or existing_agents is None:
-                    merged_agents = list(dict.fromkeys((existing_agents or []) + agent_list))
-                else:
-                    merged_agents = list(existing_agents)
-
-                existing_raw_map = existing.get("model_map")
-                existing_map = {
-                    safe_model_key(k): v
-                    for k, v in (existing_raw_map or {}).items()
-                    if isinstance(k, str) and isinstance(v, str) and v.strip() and not any(ch.isspace() for ch in v.strip())
-                }
-                if is_created_in_run:
-                    merged_models = {**existing_map, **clean_models} if has_explicit_models else (existing_map or clean_models)
-                elif existing_raw_map is None:
-                    merged_models = clean_models
-                else:
-                    merged_models = dict(existing_raw_map)
-
-                existing_eps = existing.get("supported_endpoints")
-                if is_created_in_run or existing_eps is None:
-                    merged_eps = list(dict.fromkeys((existing_eps or []) + declared_eps))
-                else:
-                    merged_eps = list(existing_eps)
-                merged_wire = existing.get("wire_api") or effective_wire
-                prior_cc_hosts = [
-                    h
-                    for h in (existing.get("cc_switch_current_hosts") or [])
-                    if h in HOSTS
-                    and not (
-                        from_cc_switch
-                        and h == host_id
-                        and not is_current
-                        and (clean_name.lower(), protocol, h) not in cc_current_keys_in_run
-                    )
-                ]
-                curr_hosts = list(
-                    dict.fromkeys(
-                        prior_cc_hosts + ([host_id] if is_current and host_id in HOSTS else [])
-                    )
-                )
-                target_url = existing.get("base_url") or safe_endpoint(endpoint, protocol)
-                if is_created_in_run and endpoint and endpoint.strip() and target_url in default_endpoints.values():
-                    candidate_url = safe_endpoint(endpoint, protocol)
-                    if candidate_url not in default_endpoints.values():
-                        target_url = candidate_url
-
-                patch_data: dict[str, Any] = {}
-                if is_created_in_run and clean_name != existing.get("name"):
-                    patch_data["name"] = clean_name
-                if merged_agents != (existing.get("agent_ids") or []):
-                    patch_data["agent_ids"] = merged_agents
-                if merged_models != (existing.get("model_map") or {}):
-                    patch_data["model_map"] = merged_models
-                if merged_eps != (existing.get("supported_endpoints") or []):
-                    patch_data["supported_endpoints"] = merged_eps
-                if protocol == "openai" and merged_wire and merged_wire != existing.get("wire_api"):
-                    patch_data["wire_api"] = merged_wire
-                if curr_hosts != (existing.get("cc_switch_current_hosts") or []):
-                    patch_data["cc_switch_current_hosts"] = curr_hosts
-                if target_url != existing.get("base_url"):
-                    patch_data["base_url"] = target_url
-
-                if patch_data:
-                    try:
-                        updated = self.save(
-                            "provider",
-                            patch_data,
-                            existing["id"],
-                            existing["version"],
-                        )
-                        existing_providers[key] = updated
-                        existing = updated
-                        stats["providers_synced"] += 1
-                    except Exception:
-                        pass
-                prov_obj = existing
-            else:
-                payload: dict[str, Any] = {
-                    "name": clean_name,
-                    "protocol": protocol,
-                    "base_url": safe_endpoint(endpoint, protocol),
-                    "enabled": True,
-                    "model_map": clean_models,
-                    "agent_ids": agent_list,
-                    "supported_endpoints": declared_eps,
-                    "credential_reattach_required": bool(has_key),
-                    "cc_switch_current_hosts": [host_id] if is_current and host_id in HOSTS else [],
-                }
-                if protocol == "openai" and effective_wire:
-                    payload["wire_api"] = effective_wire
-                if isinstance(sort_index, int) and -1000000 <= sort_index <= 1000000:
-                    payload["sort_index"] = sort_index
-                try:
-                    prov_obj = self.save("provider", payload)
-                    created_provider_ids.add(prov_obj["id"])
-                    existing_providers[key] = prov_obj
-                    stats["providers_synced"] += 1
-                except Exception:
-                    return None
-
-            # Attach secret into Keychain / Vault when available so 1-click switch & auth checks work
-            secret_clean = str(raw_secret or "").strip()
-            if (
-                secret_clean
-                and not SECRET_REF.search(secret_clean)
-                and (not prov_obj.get("credential_ref") or prov_obj.get("credential_reattach_required"))
-            ):
-                if not ("PYTEST_CURRENT_TEST" in os.environ and isinstance(self.vault, KeychainSecretStore)):
-                    try:
-                        prov_obj = self.credential("provider", prov_obj["id"], secret_clean)
-                        existing_providers[key] = prov_obj
-                    except Exception:
-                        self._note_sync_failure("credential", clean_name)
-
-            # Remove any previously corrupted model entities whose model_id contains whitespace
-            for (pid, mid_key), m_ent in list(existing_models.items()):
-                if pid == prov_obj["id"] and isinstance(mid_key, str) and any(ch.isspace() for ch in mid_key.strip()):
-                    try:
-                        self.delete("model", m_ent["id"], m_ent["version"])
-                        existing_models.pop((pid, mid_key), None)
-                    except Exception:
-                        self._note_sync_failure("model", str(mid_key))
-
-            # Ensure model entities exist for this provider
-            seen_mids = set()
-            all_mids = list((prov_obj.get("model_map") or clean_models).values())
-            for mid in all_mids:
-                mid_clean = str(mid).strip()
-                if not mid_clean or any(ch.isspace() for ch in mid_clean) or mid_clean in seen_mids:
-                    continue
-                seen_mids.add(mid_clean)
-                display_label = str((model_labels or {}).get(mid_clean) or mid_clean).strip()[:180]
-                if (prov_obj["id"], mid_clean) not in existing_models:
-                    try:
-                        m_obj = self.save(
-                            "model",
-                            {
-                                "name": display_label,
-                                "provider_id": prov_obj["id"],
-                                "model_id": mid_clean,
-                                "agent_ids": prov_obj.get("agent_ids") or agent_list,
-                            },
-                        )
-                        created_model_ids.add(m_obj["id"])
-                        existing_models[(prov_obj["id"], mid_clean)] = m_obj
-                        stats["models_synced"] += 1
-                    except Exception:
-                        pass
-                else:
-                    ex_m = existing_models[(prov_obj["id"], mid_clean)]
-                    if ex_m["id"] in created_model_ids or ex_m.get("agent_ids") is None:
-                        target_m_agents = list(dict.fromkeys((ex_m.get("agent_ids") or []) + (prov_obj.get("agent_ids") or agent_list)))
-                        if target_m_agents != (ex_m.get("agent_ids") or []):
-                            try:
-                                existing_models[(prov_obj["id"], mid_clean)] = self.save(
-                                    "model",
-                                    {"agent_ids": target_m_agents},
-                                    ex_m["id"],
-                                    ex_m["version"],
-                                )
-                            except Exception:
-                                pass
-
-            if is_current and host_id and host_id in HOSTS:
-                bkey = (host_id, prov_obj["id"], "")
-                if bkey not in existing_bindings:
-                    first_mid = (prov_obj.get("model_map") or {}).get("default") or next(iter(seen_mids), None)
-                    model_entity = existing_models.get((prov_obj["id"], first_mid)) if first_mid else None
-                    try:
-                        b_obj = self.save(
-                            "binding",
-                            {
-                                "host_id": host_id,
-                                "provider_id": prov_obj["id"],
-                                "model_id": model_entity["id"] if model_entity else None,
-                            },
-                        )
-                        existing_bindings[bkey] = b_obj
-                        stats["bindings_synced"] += 1
-                    except Exception:
-                        pass
-            return prov_obj
-
-        # 1. Sync from ~/.cc-switch/cc-switch.db if available
-        cc_db_path = self.home / ".cc-switch/cc-switch.db"
-        if not cc_db_path.parent.is_symlink() and not cc_db_path.is_symlink() and cc_db_path.is_file():
-            try:
-                from app.adapters.base import isolated_sqlite_snapshot
-
-                cc_stack = ExitStack()
-                try:
-                    staged_cc_db = cc_stack.enter_context(isolated_sqlite_snapshot(cc_db_path, host="claude-code"))
-                    conn = sqlite3.connect(staged_cc_db, timeout=3)
-                    cc_stack.callback(conn.close)
-                    conn.row_factory = sqlite3.Row
-                    conn.execute("PRAGMA mmap_size = 0")
-                    conn.execute("PRAGMA trusted_schema = OFF")
-                    conn.execute("PRAGMA query_only = ON")
-                    tables = {
-                        r["name"]
-                        for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
-                    }
-                    if "providers" in tables:
-                        p_cols = {r[1] for r in conn.execute('PRAGMA table_info("providers")').fetchall()}
-                        sel_cols = [c for c in ("id", "app_type", "name", "settings_config", "is_current", "sort_index", "meta") if c in p_cols]
-                        rows = conn.execute(f'SELECT {",".join(sel_cols)} FROM providers LIMIT 200').fetchall()
-                        for r in rows:
-                            row = dict(r)
-                            app_type = str(row.get("app_type") or "claude").strip()
-                            host_id = cc_app_to_host.get(app_type, "claude-code")
-                            try:
-                                cfg = json.loads(row.get("settings_config") or "{}")
-                                if not isinstance(cfg, dict):
-                                    cfg = {}
-                            except Exception:
-                                cfg = {}
-                            protocol = "anthropic"
-                            endpoint = ""
-                            wire_api: str | None = None
-                            models: dict[str, str] = {}
-                            model_labels: dict[str, str] = {}
-                            raw_secret = ""
-                            if app_type == "gemini" or (isinstance(cfg.get("env"), dict) and "GOOGLE_GEMINI_BASE_URL" in cfg.get("env", {})):
-                                env = cfg.get("env") if isinstance(cfg.get("env"), dict) else {}
-                                protocol = "gemini"
-                                endpoint = str(env.get("GOOGLE_GEMINI_BASE_URL") or "")
-                                raw_secret = str(env.get("GEMINI_API_KEY") or env.get("GOOGLE_API_KEY") or "").strip()
-                                if isinstance(env.get("GEMINI_MODEL"), str) and env["GEMINI_MODEL"].strip():
-                                    gm = env["GEMINI_MODEL"].strip()
-                                    models["default"] = gm
-                                    model_labels[gm] = gm
-                            elif app_type in ("codex", "grokbuild") or isinstance(cfg.get("config"), str):
-                                protocol = "openai"
-                                wire_api = "responses"
-                                toml_str = cfg.get("config") if isinstance(cfg.get("config"), str) else ""
-                                native = {}
-                                if toml_str.strip():
-                                    try:
-                                        native = tomllib.loads(toml_str)
-                                    except Exception:
-                                        native = {}
-                                mp = native.get("model_providers") if isinstance(native.get("model_providers"), dict) else {}
-                                sel = native.get("model_provider")
-                                p_entry = mp.get(sel) if isinstance(sel, str) and isinstance(mp.get(sel), dict) else None
-                                if not p_entry and mp:
-                                    first_v = next(iter(mp.values()), None)
-                                    if isinstance(first_v, dict):
-                                        p_entry = first_v
-                                if isinstance(p_entry, dict):
-                                    endpoint = str(p_entry.get("base_url") or "")
-                                    if p_entry.get("wire_api") in ("responses", "chat"):
-                                        wire_api = str(p_entry["wire_api"])
-                                if isinstance(native.get("model"), str) and native["model"].strip():
-                                    cm = native["model"].strip()
-                                    models["default"] = cm
-                                    model_labels[cm] = cm
-                                auth = cfg.get("auth") if isinstance(cfg.get("auth"), dict) else {}
-                                raw_secret = str(auth.get("OPENAI_API_KEY") or auth.get("API_KEY") or "").strip()
-                            elif "options" in cfg or app_type in ("opencode", "mcode"):
-                                npm_pkg = str(cfg.get("npm") or "").lower()
-                                protocol = "anthropic" if "anthropic" in npm_pkg else "openai"
-                                if protocol == "openai":
-                                    wire_api = "responses" if npm_pkg == "@ai-sdk/openai" else "chat"
-                                opts = cfg.get("options") if isinstance(cfg.get("options"), dict) else {}
-                                endpoint = str(opts.get("baseURL") or opts.get("baseUrl") or "")
-                                raw_secret = str(opts.get("apiKey") or opts.get("api_key") or "").strip()
-                                if isinstance(cfg.get("models"), dict):
-                                    for mk, mv in cfg["models"].items():
-                                        mk_str = str(mk).strip()
-                                        if not mk_str:
-                                            continue
-                                        mid = (
-                                            mv.get("id").strip()
-                                            if isinstance(mv, dict) and isinstance(mv.get("id"), str) and mv["id"].strip()
-                                            else mk_str
-                                        )
-                                        mlabel = (
-                                            mv.get("name").strip()
-                                            if isinstance(mv, dict) and isinstance(mv.get("name"), str) and mv["name"].strip()
-                                            else mid
-                                        )
-                                        if not any(ch.isspace() for ch in mid):
-                                            models[mk_str] = mid
-                                            model_labels[mid] = mlabel
-                                    if models and "default" not in models:
-                                        models["default"] = next(iter(models.values()))
-                            else:
-                                env = cfg.get("env") if isinstance(cfg.get("env"), dict) else {}
-                                protocol = "anthropic"
-                                endpoint = str(env.get("ANTHROPIC_BASE_URL") or cfg.get("base_url") or "")
-                                raw_secret = str(env.get("ANTHROPIC_AUTH_TOKEN") or env.get("ANTHROPIC_API_KEY") or cfg.get("api_key") or "").strip()
-                                for k in ("ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL"):
-                                    if isinstance(env.get(k), str) and env[k].strip():
-                                        am = env[k].strip()
-                                        models[k] = am
-                                        model_labels[am] = am
-                                        if "default" not in models:
-                                            models["default"] = am
-
-                            upsert_provider_record(
-                                name=friendly_provider_name(row.get("name"), row.get("id"), endpoint, models, protocol),
-                                protocol=protocol,
-                                endpoint=endpoint,
-                                models=models,
-                                host_id=host_id,
-                                sort_index=row.get("sort_index") if isinstance(row.get("sort_index"), int) else None,
-                                has_key=bool(raw_secret),
-                                raw_secret=raw_secret,
-                                is_current=bool(row.get("is_current")),
-                                wire_api=wire_api,
-                                model_labels=model_labels,
-                                from_cc_switch=True,
-                                legacy_id=str(row.get("id") or ""),
-                            )
-                        active_cc_hosts = {h for (_, _, h) in cc_current_keys_in_run}
-                        for key, prov in list(existing_providers.items()):
-                            old_cc = prov.get("cc_switch_current_hosts") or []
-                            if not old_cc:
-                                continue
-                            new_cc = [
-                                h
-                                for h in old_cc
-                                if h in HOSTS and (h not in active_cc_hosts or (key[0], key[1], h) in cc_current_keys_in_run)
-                            ]
-                            if new_cc != old_cc:
-                                try:
-                                    existing_providers[key] = self.save(
-                                        "provider",
-                                        {"cc_switch_current_hosts": new_cc},
-                                        prov["id"],
-                                        prov["version"],
-                                    )
-                                except Exception:
-                                    pass
-
-                    if "mcp_servers" in tables:
-                        m_cols = {r[1] for r in conn.execute('PRAGMA table_info("mcp_servers")').fetchall()}
-                        sel_m = [c for c in ("id", "name", "server_config", "enabled_claude", "enabled_codex", "enabled_gemini", "enabled_opencode") if c in m_cols]
-                        for r in conn.execute(f'SELECT {",".join(sel_m)} FROM mcp_servers LIMIT 200').fetchall():
-                            row = dict(r)
-                            m_name = str(row.get("name") or row.get("id") or "").strip()
-                            if not m_name or m_name.lower() == "contextcore" or m_name.startswith("senrelay_"):
-                                continue
-                            try:
-                                scfg = json.loads(row.get("server_config") or "{}")
-                                if not isinstance(scfg, dict):
-                                    continue
-                            except Exception:
-                                continue
-                            agent_ids = []
-                            if row.get("enabled_claude"):
-                                agent_ids.append("claude-code")
-                            if row.get("enabled_codex"):
-                                agent_ids.append("codex")
-                            if row.get("enabled_gemini"):
-                                agent_ids.append("gemini-cli")
-                            if row.get("enabled_opencode"):
-                                agent_ids.append("opencode")
-                            if not agent_ids:
-                                agent_ids = ["claude-code", "codex", "cursor", "opencode"]
-                            transport = "http" if scfg.get("url") else "stdio"
-                            mcp_cfg: dict = {"transport": transport}
-                            if transport == "stdio":
-                                cmd = str(scfg.get("command") or "").strip()
-                                if not cmd:
-                                    continue
-                                mcp_cfg["command"] = cmd
-                                if isinstance(scfg.get("args"), list):
-                                    mcp_cfg["args"] = [
-                                        str(a)
-                                        for a in scfg["args"]
-                                        if not SECRET_REF.search(str(a))
-                                        and not re.search(r"(?i)sk-[A-Za-z0-9_-]{8,}|--(?:api[-_]key|token|secret|password|auth)(?:[=\s]|$)", str(a))
-                                    ]
-                                if isinstance(scfg.get("env"), dict):
-                                    mcp_cfg["env"] = {
-                                        str(k): str(v)
-                                        for k, v in scfg["env"].items()
-                                        if not SECRET_REF.search(str(v))
-                                        and not re.search(r"(?i)(key|secret|password|auth|token|credential|cookie)", str(k))
-                                    }
-                            else:
-                                try:
-                                    mcp_cfg["url"] = self._endpoint(str(scfg.get("url") or ""))
-                                except Exception:
-                                    continue
-                            akey = ("mcp", m_name.lower())
-                            if akey in existing_assets:
-                                ex = existing_assets[akey]
-                                if ex["id"] in created_asset_ids or ex.get("agent_ids") is None:
-                                    merged_a = list(dict.fromkeys((ex.get("agent_ids") or []) + agent_ids))
-                                    if merged_a != (ex.get("agent_ids") or []):
-                                        try:
-                                            existing_assets[akey] = self.save("asset", {"agent_ids": merged_a}, ex["id"], ex["version"])
-                                            stats["mcp_synced"] += 1
-                                        except Exception:
-                                            pass
-                            else:
-                                try:
-                                    created = self.save(
-                                        "asset",
-                                        {
-                                            "kind": "mcp",
-                                            "name": m_name[:180],
-                                            "config": mcp_cfg,
-                                            "agent_ids": agent_ids,
-                                            "source": {"type": "cc-switch", "id": row.get("id")},
-                                        },
-                                    )
-                                    created_asset_ids.add(created["id"])
-                                    existing_assets[akey] = created
-                                    stats["mcp_synced"] += 1
-                                except Exception:
-                                    pass
-
-                    doc_secret_re = re.compile(
-                        r"(?i)sk-[A-Za-z0-9_-]{8,}|bearer\s+[^\s\"']+|(?:authorization|x-api-key)\s*[:=]|--(?:api[-_]key|token|secret|password|auth)(?:[=\s]|$)"
-                    )
-                    if "prompts" in tables:
-                        pr_cols = {r[1] for r in conn.execute('PRAGMA table_info("prompts")').fetchall()}
-                        sel_pr = [c for c in ("id", "app_type", "name", "content", "enabled") if c in pr_cols]
-                        for r in conn.execute(f'SELECT {",".join(sel_pr)} FROM prompts LIMIT 200').fetchall():
-                            row = dict(r)
-                            pr_name = str(row.get("name") or row.get("id") or "").strip()
-                            pr_content = doc_secret_re.sub("[REDACTED]", SECRET_REF.sub("", str(row.get("content") or "").strip()))
-                            if not pr_name or not pr_content:
-                                continue
-                            host_id = cc_app_to_host.get(str(row.get("app_type") or "claude"), "claude-code")
-                            agent_ids = [host_id] if host_id in HOSTS else ["claude-code"]
-                            akey = ("prompt", pr_name.lower())
-                            if akey in existing_assets:
-                                ex = existing_assets[akey]
-                                if ex["id"] in created_asset_ids or ex.get("agent_ids") is None:
-                                    merged_a = list(dict.fromkeys((ex.get("agent_ids") or []) + agent_ids))
-                                    if merged_a != (ex.get("agent_ids") or []):
-                                        try:
-                                            existing_assets[akey] = self.save("asset", {"agent_ids": merged_a}, ex["id"], ex["version"])
-                                            stats["prompts_synced"] += 1
-                                        except Exception:
-                                            pass
-                            else:
-                                try:
-                                    created = self.save(
-                                        "asset",
-                                        {
-                                            "kind": "prompt",
-                                            "name": pr_name[:180],
-                                            "content": pr_content[:190000],
-                                            "agent_ids": agent_ids,
-                                            "source": {"type": "cc-switch", "id": row.get("id"), "app_type": row.get("app_type")},
-                                        },
-                                    )
-                                    created_asset_ids.add(created["id"])
-                                    existing_assets[akey] = created
-                                    stats["prompts_synced"] += 1
-                                except Exception:
-                                    pass
-                    stats["sources"].append("cc-switch.db")
-                finally:
-                    cc_stack.close()
-            except Exception:
-                self._note_sync_failure("cc-switch", "cc-switch.db")
-
-        # 2. Sync MCP servers from local host config files
-        for h_id, host in HOSTS.items():
-            if not host.get("mcp_path"):
-                continue
-            mcp_file = self.home / host["mcp_path"]
-            try:
-                raw_bytes = self.transactions._read(mcp_file)
-                if raw_bytes is None:
-                    continue
-                if host.get("format") in ("yaml", "json5"):
-                    from app.integrations.structured_config import parse_document
-                    doc_data = parse_document(host["format"], raw_bytes.decode())
-                elif host.get("format") == "toml":
-                    doc_data = tomllib.loads(raw_bytes.decode())
-                else:
-                    doc_data = json.loads(raw_bytes)
-                servers = doc_data.get("mcp_servers" if host.get("format") == "toml" else host.get("container", "mcpServers"), {})
-                if not isinstance(servers, dict):
-                    continue
-            except Exception:
-                self._note_sync_failure("host-mcp", h_id)
-                continue
-            for c_name_raw, scfg in servers.items():
-                c_name = str(c_name_raw or "").strip()
-                if not c_name or c_name.lower() == "contextcore" or c_name.startswith("senrelay_") or not isinstance(scfg, dict):
-                    continue
-                mcp_cfg = None
-                raw_url = scfg.get("url") or scfg.get("serverUrl")
-                if isinstance(raw_url, str) and raw_url.strip():
-                    try:
-                        mcp_cfg = {"transport": "http", "url": self._endpoint(raw_url.strip())}
-                    except Exception:
-                        mcp_cfg = None
-                else:
-                    cmd_val = scfg.get("command")
-                    args_val = scfg.get("args")
-                    if isinstance(cmd_val, list) and cmd_val:
-                        cmd_str = str(cmd_val[0] or "").strip()
-                        args_val = [str(x) for x in cmd_val[1:]]
-                    elif isinstance(cmd_val, str):
-                        cmd_str = cmd_val.strip()
-                    else:
-                        cmd_str = ""
-                    if cmd_str and not SECRET_REF.search(cmd_str):
-                        safe_args = []
-                        if isinstance(args_val, list):
-                            safe_args = [
-                                str(a)
-                                for a in args_val
-                                if not SECRET_REF.search(str(a))
-                                and not re.search(r"(?i)sk-[A-Za-z0-9_-]{8,}|--(?:api[-_]key|token|secret|password|auth)(?:[=\s]|$)", str(a))
-                            ]
-                        mcp_cfg = {"transport": "stdio", "command": cmd_str, "args": safe_args}
-                        if isinstance(scfg.get("cwd"), str) and scfg["cwd"].strip() and not SECRET_REF.search(scfg["cwd"]):
-                            mcp_cfg["cwd"] = scfg["cwd"].strip()
-                        env_dict = scfg.get("env") or scfg.get("environment")
-                        if isinstance(env_dict, dict):
-                            safe_env = {
-                                str(k): str(v)
-                                for k, v in env_dict.items()
-                                if not SECRET_REF.search(str(v))
-                                and not re.search(r"(?i)(key|secret|password|auth|token|credential|cookie)", str(k))
-                            }
-                            if safe_env:
-                                mcp_cfg["env"] = safe_env
-                if not mcp_cfg:
-                    continue
-                akey = ("mcp", c_name.lower())
-                if akey in existing_assets:
-                    ex = existing_assets[akey]
-                    patch_asset: dict[str, Any] = {}
-                    if ex["id"] in created_asset_ids or ex.get("agent_ids") is None:
-                        merged_a = list(dict.fromkeys((ex.get("agent_ids") or []) + [h_id]))
-                        if merged_a != (ex.get("agent_ids") or []):
-                            patch_asset["agent_ids"] = merged_a
-                    ex_cfg = ex.get("config") if isinstance(ex.get("config"), dict) else {}
-                    if (
-                        ex_cfg.get("transport") == "stdio"
-                        and mcp_cfg.get("transport") == "stdio"
-                        and ex_cfg.get("command") == mcp_cfg.get("command")
-                        and not ex_cfg.get("args")
-                        and mcp_cfg.get("args")
-                    ):
-                        merged_cfg = copy.deepcopy(ex_cfg)
-                        merged_cfg["args"] = mcp_cfg["args"]
-                        if not merged_cfg.get("cwd") and mcp_cfg.get("cwd"):
-                            merged_cfg["cwd"] = mcp_cfg["cwd"]
-                        existing_env = dict(merged_cfg.get("env") or {})
-                        for env_k, env_v in (mcp_cfg.get("env") or {}).items():
-                            existing_env.setdefault(env_k, env_v)
-                        if existing_env:
-                            merged_cfg["env"] = existing_env
-                        if merged_cfg != ex_cfg:
-                            patch_asset["config"] = merged_cfg
-                    if patch_asset:
-                        try:
-                            existing_assets[akey] = self.save("asset", patch_asset, ex["id"], ex["version"])
-                            stats["mcp_synced"] += 1
-                        except Exception:
-                            pass
-                else:
-                    try:
-                        created = self.save(
-                            "asset",
-                            {
-                                "kind": "mcp",
-                                "name": c_name[:180],
-                                "config": mcp_cfg,
-                                "agent_ids": [h_id],
-                                "source": {"type": "host_config", "host_id": h_id},
-                            },
-                        )
-                        created_asset_ids.add(created["id"])
-                        existing_assets[akey] = created
-                        stats["mcp_synced"] += 1
-                    except Exception:
-                        pass
-
-        # 3. Sync local Skills directories (~/.claude/skills, ~/.codex/skills, ~/.agents/skills, ~/.cc-switch/skills)
-        doc_secret_re = re.compile(
-            r"(?i)sk-[A-Za-z0-9_-]{8,}|bearer\s+[^\s\"']+|(?:authorization|x-api-key)\s*[:=]|--(?:api[-_]key|token|secret|password|auth)(?:[=\s]|$)"
-        )
-
-        def collect_local_skill_files(skill_dir: Path) -> dict[str, str] | None:
-            collected: dict[str, str] = {}
-            total_bytes = 0
-            open_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
-            for directory, subdirs, names in os.walk(skill_dir, followlinks=False):
-                dir_path = Path(directory)
-                if any((dir_path / entry_name).is_symlink() for entry_name in subdirs + names):
-                    raise ValueError("Skill directory contains symlink")
-                subdirs[:] = sorted(d for d in subdirs if d not in (".git", "__pycache__"))
-                for fname in sorted(names):
-                    if fname == ".DS_Store" or fname.endswith(".pyc"):
-                        continue
-                    fpath = dir_path / fname
-                    rel_posix = fpath.relative_to(skill_dir).as_posix()
-                    self._validate_skill_path(rel_posix)
-                    if rel_posix != "SKILL.md" and SENSITIVE.search(rel_posix):
-                        continue
-                    if len(collected) >= 100:
-                        if rel_posix == "SKILL.md":
-                            raise ValueError("Skill exceeds file count limit")
-                        continue
-                    fd = os.open(fpath, open_flags)
-                    try:
-                        with os.fdopen(fd, "rb") as stream:
-                            info = os.fstat(stream.fileno())
-                            if not stat.S_ISREG(info.st_mode):
-                                if rel_posix == "SKILL.md":
-                                    raise ValueError("SKILL.md must be a regular file")
-                                continue
-                            if info.st_size > 400000:
-                                if rel_posix == "SKILL.md":
-                                    return None
-                                continue
-                            raw_data = stream.read(400001)
-                            if len(raw_data) > 400000:
-                                if rel_posix == "SKILL.md":
-                                    return None
-                                continue
-                    except Exception:
-                        if rel_posix == "SKILL.md":
-                            raise
-                        continue
-                    try:
-                        decoded_text = raw_data.decode("utf-8")
-                    except UnicodeDecodeError:
-                        if rel_posix == "SKILL.md":
-                            raise
-                        continue
-                    sanitized_text = doc_secret_re.sub("[REDACTED]", SECRET_REF.sub("", decoded_text))
-                    encoded_len = len(sanitized_text.encode("utf-8"))
-                    if total_bytes + encoded_len > 1800000:
-                        if rel_posix == "SKILL.md":
-                            return None
-                        continue
-                    total_bytes += encoded_len
-                    collected[rel_posix] = sanitized_text
-            if "SKILL.md" not in collected:
-                return None
-            return collected
-
-        skill_roots = [
-            (self.home / ".claude/skills", ["claude-code"]),
-            (self.home / ".codex/skills", ["codex"]),
-            (self.home / ".agents/skills", [h for h in ("claude-code", "codex", "cursor", "opencode", "antigravity-cli") if h in HOSTS]),
-            (self.home / ".cc-switch/skills", ["claude-code", "codex"]),
-        ]
-        total_skills = sum(1 for k in existing_assets if k[0] == "skill")
-        for s_root, default_hosts in skill_roots:
-            if not s_root.is_dir() or s_root.is_symlink():
-                continue
-            try:
-                entries = sorted(s_root.iterdir(), key=lambda p: p.name.lower())
-            except Exception:
-                self._note_sync_failure("skills", s_root.name)
-                continue
-            for item in entries:
-                if item.name.startswith(".") or item.name.startswith("asset_"):
-                    continue
-                s_name = item.name.strip()[:180]
-                if item.is_symlink():
-                    self._note_sync_failure("skill", s_name)
-                    continue
-                if not item.is_dir():
-                    continue
-                skill_md = item / "SKILL.md"
-                if skill_md.is_symlink():
-                    self._note_sync_failure("skill", s_name)
-                    continue
-                if not skill_md.is_file():
-                    continue
-                akey = ("skill", s_name.lower())
-                if akey in existing_assets:
-                    ex = existing_assets[akey]
-                    patch_skill: dict[str, Any] = {}
-                    if ex["id"] in created_asset_ids or ex.get("agent_ids") is None:
-                        merged_a = list(dict.fromkeys([a for a in (ex.get("agent_ids") or []) + default_hosts if a in HOSTS]))
-                        if merged_a != (ex.get("agent_ids") or []):
-                            patch_skill["agent_ids"] = merged_a
-                    ex_source = ex.get("source") if isinstance(ex.get("source"), dict) else {}
-                    if s_name.lower() in ("contextcore", "contextcore-handoff") and ex_source.get("type") == "local":
-                        try:
-                            raw_md = skill_md.read_bytes()
-                            if len(raw_md) <= 400000:
-                                md_text = doc_secret_re.sub("[REDACTED]", SECRET_REF.sub("", raw_md.decode("utf-8")))
-                                cur_files = ex.get("files") if isinstance(ex.get("files"), dict) else {}
-                                if cur_files.get("SKILL.md") != md_text:
-                                    patch_skill["files"] = {**cur_files, "SKILL.md": md_text}
-                        except Exception:
-                            pass
-                    if patch_skill:
-                        try:
-                            existing_assets[akey] = self.save("asset", patch_skill, ex["id"], ex["version"])
-                            stats["skills_synced"] += 1
-                        except Exception:
-                            pass
-                    continue
-                if total_skills >= 60:
-                    continue
-                try:
-                    collected_files = collect_local_skill_files(item)
-                except Exception:
-                    self._note_sync_failure("skill", s_name)
-                    continue
-                if not collected_files:
-                    continue
-                try:
-                    created = self.save(
-                        "asset",
-                        {
-                            "kind": "skill",
-                            "name": s_name,
-                            "install_mode": "copy",
-                            "files": collected_files,
-                            "agent_ids": [a for a in default_hosts if a in HOSTS],
-                            "source": {"type": "local", "path": str(item)},
-                        },
-                    )
-                    created_asset_ids.add(created["id"])
-                    existing_assets[akey] = created
-                    stats["skills_synced"] += 1
-                    total_skills += 1
-                except Exception:
-                    pass
-
-        return {
-            "ok": True,
-            **stats,
-            "total_providers": len(existing_providers),
-            "total_models": len(existing_models),
-            "total_assets": len(existing_assets),
-        }
 
 
 def service() -> ManagementService:
@@ -2953,5 +2147,9 @@ def resolve_provider(provider_id: str) -> dict:
     if not value.get("enabled", True):
         raise ConfigurationError("Provider is disabled")
     from app.services.provider_credentials import binding, resolved_key
-    key = resolved_key(manager, binding(manager, value))
-    return {**value, "api_key": key}
+    choice = binding(manager, value)
+    key = resolved_key(manager, choice)
+    account = choice.get("account") or {}
+    return {**value, "api_key": key, "credential_source": choice["source"],
+            "resolved_account_id": account.get("id"), "resolved_account_name": account.get("name"),
+            "resolved_account_version": account.get("version")}

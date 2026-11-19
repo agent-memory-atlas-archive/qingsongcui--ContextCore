@@ -476,6 +476,15 @@ class ConfigurationTransactions:
                         exists = False
                         break
                 current = node if exists else None
+            elif kind == "toml_table":
+                from app.integrations.named_toml_table import document
+                pointer = spec.get('pointer', [])
+                if len(pointer) != 2 or not all(isinstance(key, str) and key for key in pointer):
+                    raise ConfigurationError('Native table requires a two-part name', 422)
+                table = document(text).get(pointer[0], {})
+                if not isinstance(table, dict):
+                    raise ConfigurationError('Native table container must be an object', 422)
+                current, exists = table.get(pointer[1]), pointer[1] in table
             elif kind == "toml_selection":
                 try:
                     data = tomllib.loads(text) if text.strip() else {}
@@ -502,6 +511,19 @@ class ConfigurationTransactions:
             key = self._item_key(spec)
             owned = self._owned(spec["path"], key)
             current_hash = digest(canonical(current).encode()) if exists else None
+            if not inspect_only and spec.get('native_origin') and owned and not exists:
+                raise ConfigurationError('Owned native entry was removed externally; review the source before applying', 409)
+            if not inspect_only and spec.get('takeover_expected_hash') and current_hash != spec['takeover_expected_hash']:
+                raise ConfigurationError('Native entry changed since import; read and review the source again', 409)
+            if not inspect_only:
+                # Whole-file rule ownership cannot coexist with another owner's
+                # block/entry in that same file, including a concurrent preview.
+                if kind == 'file' or kind == 'block':
+                    with self.connect() as conn:
+                        overlap = conn.execute("""SELECT 1 FROM management_owned WHERE path=? AND owner<>?
+                            AND (?='file' OR item_key LIKE 'file:%') LIMIT 1""", (spec['path'],spec['owner'],kind)).fetchone()
+                    if overlap:
+                        raise ConfigurationError('Whole-file ownership overlaps another managed resource', 409)
             if inspect_only:
                 status = "not_managed" if not owned or owned["owner"] != spec["owner"] else "missing" if not exists else "verified" if current_hash == owned["value_hash"] else "externally_changed"
                 changes.append({"owner": spec["owner"], "path": spec["path"], "status": status})
@@ -543,6 +565,11 @@ class ConfigurationTransactions:
                     for component in pointer:
                         actual = actual[component]
                     new_value = actual
+            elif kind == "toml_table":
+                from app.integrations.named_toml_table import replace
+                if not resolve and spec.get('restore_from'):
+                    new_value = {'_snapshot': 'Private native table'}
+                text = replace(text, pointer, None if operation == 'uninstall' else new_value)
             elif kind == "toml_selection":
                 field_key = pointer[0]
                 table = re.search(r"(?m)^\s*\[", text)
@@ -608,6 +635,8 @@ class ConfigurationTransactions:
             files.setdefault(path, []).append(spec)
         payload = {"files": [], "metadata": metadata or {}, "readback": "not_run", "host_reload": "not_run", "real_request": "not_run"}
         for path, entries in files.items():
+            if len(entries) > 1 and any(spec["kind"] == "file" and spec.get("native_origin") for spec in entries):
+                raise ConfigurationError("Whole-file ownership overlaps another change in this plan", 409)
             skill = entries[0].get("managed_skill")
             if skill and len(entries) != 1:
                 raise ConfigurationError("A managed Skill file requires one operation", 422)
@@ -692,9 +721,26 @@ class ConfigurationTransactions:
         with self.connect() as conn:
             conn.execute('BEGIN')
             total = conn.execute('SELECT count(*) FROM management_plans' + where, params).fetchone()[0]
-            rows = conn.execute("SELECT id,version,status,created_at,updated_at,json_extract(payload,'$.metadata.host_id') host_id,json_extract(payload,'$.metadata.operation') operation FROM management_plans" + where + ' ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?', [*params, limit, offset]).fetchall()
+            undoable = """p.status='applied' AND json_extract(p.payload,'$.renderer') IS NULL
+                AND json_extract(p.payload,'$.metadata.host_routing') IS NULL
+                AND EXISTS(SELECT 1 FROM management_undo_states u WHERE u.plan_id=p.id)
+                AND p.id=(SELECT q.id FROM management_plans q
+                    WHERE json_extract(q.payload,'$.metadata.host_id')=json_extract(p.payload,'$.metadata.host_id')
+                    AND q.status IN ('applied','applying','recovery_required')
+                    ORDER BY q.updated_at DESC,q.id DESC LIMIT 1)""" if conn.execute(
+                        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='management_undo_states'").fetchone() else "0"
+            rows = conn.execute(f"""SELECT id,version,status,created_at,updated_at,({undoable}) undo_available,
+                json_extract(payload,'$.metadata.host_id') host_id,json_extract(payload,'$.metadata.operation') operation,
+                json_extract(payload,'$.metadata.scope') scope,json_extract(payload,'$.metadata.bundle_id') bundle_id,
+                json_array_length(payload,'$.metadata.configuration_changes') change_count,
+                (SELECT json_group_array(json_object('name',substr(json_extract(value,'$.name'),1,200),
+                    'kind',substr(json_extract(value,'$.kind'),1,40),'operation',substr(json_extract(value,'$.operation'),1,20)))
+                    FROM (SELECT value FROM json_each(p.payload,'$.metadata.configuration_changes') LIMIT 3)) changes
+                FROM management_plans p""" + where + ' ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?', [*params, limit, offset]).fetchall()
         items = [{**{key: row[key] for key in ('id', 'version', 'status', 'created_at', 'updated_at')},
-                  'payload': {'metadata': {'host_id': row['host_id'], 'operation': row['operation']}}, '_summary': True} for row in rows]
+                  'undo_available': bool(row['undo_available']),
+                  'payload': {'metadata': {**{key: row[key] for key in ('host_id', 'operation', 'scope', 'bundle_id')},
+                      'configuration_changes': json.loads(row['changes']), 'change_count': row['change_count'] or 0}}, '_summary': True} for row in rows]
         return {'items': items, 'total': total, 'offset': offset, 'limit': limit,
                 'has_more': offset + len(items) < total, 'summary': True, 'agent_id': host_id}
 
@@ -739,7 +785,8 @@ class ConfigurationTransactions:
         with _LOCK:
             plan = self.get(plan_id)
             deferred = plan["payload"].get("renderer") == "connection_components_v1"
-            if deferred and (renderer is None or finalize is None):
+            undo = plan["payload"].get("renderer") == "managed_undo"
+            if (deferred or undo) and (renderer is None or finalize is None):
                 raise ConfigurationError("Use the connection plan endpoint to apply this plan")
             if plan["version"] != expected_version:
                 raise ConfigurationError("Plan version changed")
@@ -755,8 +802,8 @@ class ConfigurationTransactions:
                     if (digest(current) if current is not None else None) != item['before_hash'] or mode != item['before_mode']:
                         self._save(plan, 'conflict')
                         raise ConfigurationError('Configuration changed since preview; create a new plan')
-            rendered = renderer(plan) if deferred else None
-            if deferred and set(rendered) != {item["path"] for item in plan["payload"]["files"]}:
+            rendered = renderer(plan) if deferred or undo else None
+            if (deferred or undo) and set(rendered) != {item["path"] for item in plan["payload"]["files"]}:
                 raise ConfigurationError("Connection plan targets changed; create a new preview")
             prepared = []
             # Preflight every file and every secret before the first mutation.
@@ -772,14 +819,16 @@ class ConfigurationTransactions:
                 if (digest(old) if old is not None else None) != item["before_hash"]:
                     self._save(plan, "conflict")
                     raise ConfigurationError("Configuration changed since preview; create a new plan")
-                if deferred:
+                if undo:
+                    after, changes = rendered[item["path"]], item["undo_changes"]
+                elif deferred:
                     mode = stat.S_IMODE(Path(item['path']).stat().st_mode) if old is not None else None
                     if mode != item['before_mode']:
                         raise ConfigurationError("Configuration permissions changed since preview")
                     after, changes = rendered[item["path"]], []
                 else:
                     after, changes = self._render(old, item["specs"], resolve=True)
-                if "before_state" in item and self._skill_state(item["specs"][0], after) != item["after_state"]:
+                if not undo and "before_state" in item and self._skill_state(item["specs"][0], after) != item["after_state"]:
                     raise ConfigurationError("Managed Skill restore changed since preview")
                 state = item.get("after_state")
                 if state and state["kind"] == "symlink" and self._skill_target(state).exists():
@@ -826,8 +875,9 @@ class ConfigurationTransactions:
                     for item, _, _, changes in prepared:
                         if "before_state" in item:
                             conn.execute("DELETE FROM management_skill_files WHERE path=?", (item["path"],))
-                            if item["after_state"] is not None and not item["specs"][0].get("relinquish"):
-                                conn.execute("INSERT INTO management_skill_files VALUES(?,?)", (item["path"], canonical(item["after_state"])))
+                            registry = item.get("undo_registry") if undo else (None if item["specs"][0].get("relinquish") else item["after_state"])
+                            if registry is not None:
+                                conn.execute("INSERT INTO management_skill_files VALUES(?,?)", (item["path"], canonical(registry)))
                         for change in changes:
                             if change["operation"] == "uninstall":
                                 conn.execute("DELETE FROM management_owned WHERE path=? AND item_key=?", (change["path"], change["key"]))

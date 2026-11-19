@@ -800,8 +800,6 @@ def create_schema(db_path: Path | None = None) -> None:
         ensure_management(conn)
         from app.services.context_epoch_service import ensure_schema as ensure_context_epochs
         ensure_context_epochs(conn)
-        from app.services.migration_service import ensure_schema as ensure_migrations
-        ensure_migrations(conn)
         from app.services.working_memory_service import ensure_schema as ensure_working_memory
         from app.services.telemetry_service import ensure_schema as ensure_telemetry
         ensure_working_memory(conn)

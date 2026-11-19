@@ -19,7 +19,9 @@ const EFFECTS = {
 export function ConnectionPlanDialog({ setup, onClose, onChanged }) {
   const [setupData, setSetupData] = useState(setup.data);
   const [selected, setSelected] = useState([]);
-  const [surface, setSurface] = useState(setupData.surfaces?.length === 1 ? setupData.surfaces[0] : '');
+  const blockedSurfaces = setupData.blocked_surfaces || [];
+  const surfaces = (setupData.surfaces || []).filter(value => !blockedSurfaces.includes(value) && (!setup.targetSurface || value === setup.targetSurface));
+  const [surface, setSurface] = useState(surfaces.length === 1 ? surfaces[0] : '');
   const [operation, setOperation] = useState('install');
   const [plan, setPlan] = useState(null);
   const [consent, setConsent] = useState(false);
@@ -30,7 +32,7 @@ export function ConnectionPlanDialog({ setup, onClose, onChanged }) {
   const prefix = `/api/connections/${setup.id}/plans`;
   const applied = plan?.status === 'applied' && plan?.readback === 'verified';
   const recovery = ['applying', 'recovery_required'].includes(plan?.status);
-  const valid = setupData.plan_supported && surface && selected.length > 0;
+  const valid = setupData.plan_supported && surfaces.includes(surface) && selected.length > 0;
 
   async function run(fn) {
     if (lock.current) return;
@@ -42,6 +44,8 @@ export function ConnectionPlanDialog({ setup, onClose, onChanged }) {
   }
   async function readback(id) {
     const result = await request(`${prefix}/${id}`);
+    if (blockedSurfaces.includes(result.surface)) throw new Error(t('安装或移除续境接入组件，请用默认配置目录重新启动续境与助手。已授权的记录可继续采集。'));
+    if (setup.targetSurface && result.surface !== setup.targetSurface) throw new Error(t('此计划属于另一助手入口。请在对应入口中核对。'));
     setPlan(result);
     setUnknown(false);
     if (result.status === 'applied' || result.status === 'recovered') onChanged();
@@ -73,10 +77,11 @@ export function ConnectionPlanDialog({ setup, onClose, onChanged }) {
   return <Modal title={t('{name} 的接入计划', { name: setup.label })} busy={busy} onClose={onClose} wide>
     <div className="editor-form connection-plan-form">
       <p>{t('只处理你选中的能力。读取历史、修改模型和使用模型额度需要另外授权。')}</p>
+      {!plan && blockedSurfaces.length > 0 && setupData.config_root ? <p className="muted">{t('安装或移除续境接入组件，请用默认配置目录重新启动续境与助手。已授权的记录可继续采集。')} <code>{setupData.config_root.variable} · {setupData.config_root.path}</code></p> : null}
       {!plan ? <>
-        <Field label={t('目标入口')}><select value={surface} disabled={busy} onChange={e => setSurface(e.target.value)}>
+        <Field label={t('目标入口')}><select value={surface} disabled={busy || !!setup.targetSurface} onChange={e => setSurface(e.target.value)}>
           <option value="">{t('请选择入口')}</option>
-          {(setupData.surfaces || []).map(value => <option key={value} value={value}>{t(SURFACES[value] || value)}</option>)}
+          {surfaces.map(value => <option key={value} value={value}>{t(SURFACES[value] || value)}</option>)}
         </select></Field>
         <Field label={t('操作')}><select value={operation} disabled={busy} onChange={e => { setOperation(e.target.value); setSelected([]); }}>
           <option value="install">{t('启用所选能力')}</option><option value="update">{t('更新所选配置')}</option><option value="uninstall">{t('撤销所选能力')}</option>
@@ -91,6 +96,7 @@ export function ConnectionPlanDialog({ setup, onClose, onChanged }) {
         {(setupData.pending_plans || []).map(item => <Button key={item.id} disabled={busy} onClick={() => run(() => readback(item.id))}>{t('查看待恢复的接入计划')}</Button>)}
         <Button variant="primary" disabled={!valid || busy} onClick={() => run(async () => {
           const result = await mutate(prefix, 'POST', { operation, capabilities: selected, surface });
+          if (result.surface !== surface) throw new Error(t('此计划属于另一助手入口。请在对应入口中核对。'));
           setPlan(result); setConsent(false);
         })}>{t('预览所选改动')}</Button>
       </> : <>

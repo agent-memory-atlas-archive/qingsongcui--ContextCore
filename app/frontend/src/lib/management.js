@@ -1,5 +1,9 @@
 import { t, locale } from './i18n.jsx';
 
+export function mcpNeedsReview(item) {
+  return item?.kind === 'mcp' && Boolean(item.native_review_required || item.credential_reattach_required);
+}
+
 export const number = (value, options = {}) => value === null || value === undefined || value === '' || typeof value === 'boolean' || !Number.isFinite(Number(value)) ? t('未知') : new Intl.NumberFormat(locale(), options).format(Number(value));
 export const list = value => Array.isArray(value) ? value : value?.items || [];
 export function display(value) {
@@ -22,6 +26,7 @@ export function hostNotice(hostId, kind, fallback) {
     case 'antigravity:provider':
       return t('请在 Antigravity 对话的模型菜单选择模型。它没有公开的自定义 API 配置接口，这里不会改写或借用账号缓存。');
     case 'codex:configuration':
+      return t('这些配置文件与 Codex Desktop 共用。桌面版下次读取配置时也会受到影响，运行中会话是否采用仍需核对。');
     case 'codex-desktop:configuration':
       return t('这些配置文件与 Codex CLI 共用，会影响后续配置读取；写入不能证明桌面会话已经采用。');
     case 'codex:prompt':
@@ -71,10 +76,8 @@ export function safeEvidence(value) {
   if (!value || typeof value !== 'object') return value;
   const entries = [];
   for (const [key, item] of Object.entries(value)) {
-    if (key === 'reference_commit') continue;
-    if (key === 'cc_switch_current_hosts' && Object.prototype.hasOwnProperty.call(value, 'local_active_hosts')) continue;
-    const mappedKey = key === 'cc_switch_current_hosts' ? 'local_active_hosts' : key;
-    entries.push([mappedKey, SENSITIVE_KEY_RE.test(mappedKey) ? '[redacted]' : safeEvidence(item)]);
+    if (['reference_commit', 'cc_switch_current_hosts', 'local_active_hosts'].includes(key)) continue;
+    entries.push([key, SENSITIVE_KEY_RE.test(key) ? '[redacted]' : safeEvidence(item)]);
   }
   return Object.fromEntries(entries);
 }
@@ -106,7 +109,7 @@ export function backendCompatibility(resource) {
   if ([404, 405, 410].includes(resource.error?.status)) return 'upgrade_required';
   if (resource.error) return 'unavailable';
   const value = resource.data;
-  if (value && typeof value === 'object' && !Array.isArray(value) && value.capabilities && typeof value.capabilities === 'object' && value.counts && typeof value.counts === 'object') return 'ready';
+  if (value && typeof value === 'object' && !Array.isArray(value) && value.capabilities?.independent_workbench === true && value.counts && typeof value.counts === 'object') return 'ready';
   if (resource.loading) return 'checking';
   return 'upgrade_required';
 }

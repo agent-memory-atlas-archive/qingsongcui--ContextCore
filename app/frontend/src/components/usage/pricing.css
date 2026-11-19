@@ -1,0 +1,6 @@
+.price-catalog-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .75rem; padding: .8rem 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
+.price-catalog-row small { display: block; margin: .35rem 0; color: var(--muted); }
+.price-catalog-row dl { display: flex; flex-wrap: wrap; gap: .5rem 1.25rem; margin: .6rem 0 0; }
+.price-catalog-row dt, .price-totals dt { font-size: .8rem; color: var(--muted); }
+.price-catalog-row dd, .price-totals dd { margin: .25rem 0 0; font-variant-numeric: tabular-nums; }
+.price-totals dd { margin-bottom: .75rem; }
