@@ -118,3 +118,14 @@ def test_disconnect_removes_only_recorded_components_and_reports_conflicts(clien
     assert result.status_code == 200, result.text
     assert result.json()['plan']['capabilities'] == ['context_tools']
     assert result.json()['plan']['readback'] == 'verified'
+
+
+def test_desktop_previous_preview_rechecked_when_cli_begins_sharing(client, monkeypatch):
+    base = '/api/connections/codex/plans'
+    monkeypatch.setenv('CODEX_HOME', str(Path.home() / '.second'))
+    plan = client.post(base, json=plan_body('desktop')).json()
+    monkeypatch.delenv('CODEX_HOME')
+    response = client.post(base + '/' + plan['id'] + '/apply', json={
+        'version': plan['version'], 'confirmed': True})
+    assert response.status_code == 409 and 'sharing changed' in response.json()['detail']
+    assert not (Path.home() / '.codex/config.toml').exists()
