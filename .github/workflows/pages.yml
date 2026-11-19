@@ -71,6 +71,14 @@ jobs:
           test -f dist/zh/claude-code-memory.html
           test -f dist/mcp-json-vs-toml-config-guide.html
           test -f dist/zh/mcp-json-vs-toml-config-guide.html
+          test -f dist/agent-management.html
+          test -f dist/zh/agent-management.html
+          test -f dist/agent-management.md
+          test -f dist/zh/agent-management.md
+          test -f dist/ai-coding-usage-tracker.html
+          test -f dist/zh/ai-coding-usage-tracker.html
+          test -f dist/ai-coding-usage-tracker.md
+          test -f dist/zh/ai-coding-usage-tracker.md
           test -f dist/pricing.md
           test -f dist/index.md
           test -f dist/hosts.md
@@ -124,6 +132,14 @@ jobs:
                 "https://senrelay.com/zh/claude-code-memory.html",
                 "https://senrelay.com/mcp-json-vs-toml-config-guide.html",
                 "https://senrelay.com/zh/mcp-json-vs-toml-config-guide.html",
+                "https://senrelay.com/agent-management.html",
+                "https://senrelay.com/zh/agent-management.html",
+                "https://senrelay.com/agent-management.md",
+                "https://senrelay.com/zh/agent-management.md",
+                "https://senrelay.com/ai-coding-usage-tracker.html",
+                "https://senrelay.com/zh/ai-coding-usage-tracker.html",
+                "https://senrelay.com/ai-coding-usage-tracker.md",
+                "https://senrelay.com/zh/ai-coding-usage-tracker.md",
                 "https://senrelay.com/pricing.md",
                 "https://senrelay.com/index.md",
                 "https://senrelay.com/hosts.md",

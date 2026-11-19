@@ -264,7 +264,15 @@
   </div>
 
   <div data-guide-section="zh">
-<section class="guide-section" id="mcp-examples"><h2>MCP 配置示例与连接核验</h2><p><a class="inline-link" href="./mcp-json-vs-toml-config-guide.html#claude-code-mcp">Claude Code MCP</a> · <a class="inline-link" href="./mcp-json-vs-toml-config-guide.html#cursor-mcp">Cursor MCP</a> · <a class="inline-link" href="./mcp-json-vs-toml-config-guide.html#codex-mcp">Codex MCP</a></p><p>查看每个助手的 JSON 或 TOML 示例，合并服务配置后在助手内重新加载，确认 contextcore 服务连通并能列出工具。</p></section>
+    <section class="guide-section" aria-labelledby="mcp-examples">
+      <h2 id="mcp-examples">Claude Code、Cursor、Codex MCP 配置怎么找</h2>
+      <h3 id="claude-code-mcp">Claude Code MCP 配置</h3>
+      <p>用户级 MCP 服务在 <code>~/.claude.json</code> 的 <code>mcpServers</code> 下。与仓库共享的项目级服务写在项目根目录的 <code>.mcp.json</code>。先用 <code>claude mcp list</code> 确认当前项目看到的服务，再在 Claude Code 里用 <code>/mcp</code> 看连接状态。 <a class="inline-link" href="./mcp-json-vs-toml-config-guide.html#claude-code-mcp">Claude Code JSON 示例</a> · <a class="inline-link" href="https://code.claude.com/docs/en/mcp">Anthropic 文档</a></p>
+      <h3 id="cursor-mcp">Cursor MCP 配置</h3>
+      <p>个人全局配置用 <code>~/.cursor/mcp.json</code>，仓库级配置用项目中的 <code>.cursor/mcp.json</code>。两者都用 <code>mcpServers</code>，同名服务以项目配置为准。保存后重开 Cursor，在 MCP 管理界面核对服务与工具。 <a class="inline-link" href="./mcp-json-vs-toml-config-guide.html#cursor-mcp">Cursor JSON 示例</a> · <a class="inline-link" href="https://prod.cursor.com/help/customization/mcp">Cursor 文档</a></p>
+      <h3 id="codex-mcp">Codex MCP 配置</h3>
+      <p>默认在 <code>~/.codex/config.toml</code> 中，为每个服务使用 <code>[mcp_servers.服务名]</code>。如果 CLI 使用独立 <code>CODEX_HOME</code>，在那个目录查看实际的 <code>config.toml</code>。用 <code>codex mcp list</code> 确认配置，再打开目标入口核对工具是否加载。 <a class="inline-link" href="./mcp-json-vs-toml-config-guide.html#codex-mcp">Codex TOML 示例</a> · <a class="inline-link" href="https://developers.openai.com/codex/mcp">Codex 文档</a></p>
+    </section>
     <div class="callout" role="note">
       <div class="callout-title">先掌握三个配置事实</div>
       <div class="callout-list">
@@ -438,14 +446,11 @@
       </div>
 
       <h3>名称与安装源消歧</h3>
-      <p>在命令行或搜索引擎中查找资料时，注意将 <strong>Senrelay（续境）</strong>（GitHub 仓库 <a class="inline-link" href="https://github.com/qingsongcui/ContextCore" target="_blank" rel="noopener noreferrer">qingsongcui/ContextCore</a>）与互联网上同名的无关第三方项目（如 <code>context-core.dev</code> 平台以及 PyPI 上的 <code>pip install contextcore</code> 包）区分开。在 Apple Silicon macOS 上应使用 Homebrew 安装或前往 GitHub Releases 获取 <code>v1.0.0-beta.2</code>（定价 <code>$0</code>，MIT 协议），首次启动后在终端清理一次隔离属性：</p>
-      <pre class="code-block"><code><span class="code-comment"># 1. 通过 Homebrew 安装（Apple Silicon macOS 14.0+）</span>
-brew install --cask qingsongcui/tap/senrelay
-
-<span class="code-comment"># 2. Beta 版本尚无 Apple 公证，手动安装后清理隔离属性</span>
+      <p>在命令行或搜索引擎中查找资料时，注意将 <strong>Senrelay（续境）</strong>（GitHub 仓库 <a class="inline-link" href="https://github.com/qingsongcui/ContextCore" target="_blank" rel="noopener noreferrer">qingsongcui/ContextCore</a>）与互联网上同名的无关第三方项目（如 <code>context-core.dev</code> 平台以及 PyPI 上的 <code>pip install contextcore</code> 包）区分开。在 Apple Silicon Mac 上<a class="inline-link" data-macos-download href="https://github.com/qingsongcui/ContextCore/releases/download/v1.0.0-beta.4/Senrelay-macOS.zip">下载 macOS Beta.4</a>（<code>$0</code>，MIT 协议）。解压并移入应用程序目录后，按下列命令首次启动和检查服务。</p>
+      <pre class="code-block"><code><span class="code-comment"># 1. Beta 版本尚无 Apple 公证，手动安装后清理隔离属性</span>
 xattr -cr /Applications/Senrelay.app
 
-<span class="code-comment"># 3. 核对本地 MCP 服务端口（桌面常驻版 8420 / 源码开发模式 18420）</span>
+<span class="code-comment"># 2. 核对本地 MCP 服务端口（桌面常驻版 8420 / 源码开发模式 18420）</span>
 curl -s http://127.0.0.1:8420/health</code></pre>
       <p>若你在 Windows 或 Linux 下开发，请不要安装 Senrelay——优先使用 Git 仓库内的 <code>AGENTS.md</code> / <code>CLAUDE.md</code>（<code>$0</code>），或参考 <a class="inline-link" href="./compare.html">5 种方案对比</a> 与 <a class="inline-link" href="./relay-workflow.html">跨 Agent 对话接力实战</a>。</p>
     </section>
@@ -492,6 +497,15 @@ curl -s http://127.0.0.1:8420/health</code></pre>
   <hr class="lang-divider">
 
   <div data-guide-section="en" lang="en">
+    <section class="guide-section" aria-labelledby="mcp-examples">
+      <h2 id="mcp-examples">Find your Claude Code, Cursor, or Codex MCP config</h2>
+      <h3 id="claude-code-mcp">Claude Code MCP config</h3>
+      <p>User-scoped servers live under <code>mcpServers</code> in <code>~/.claude.json</code>. Put project-scoped settings shared through the repository in its root <code>.mcp.json</code>. Run <code>claude mcp list</code> from the relevant project, then check connections with <code>/mcp</code> in Claude Code. <a class="inline-link" href="./mcp-json-vs-toml-config-guide.html#claude-code-mcp">Claude Code JSON example</a> · <a class="inline-link" href="https://code.claude.com/docs/en/mcp">Anthropic docs</a></p>
+      <h3 id="cursor-mcp">Cursor MCP config</h3>
+      <p>Use <code>~/.cursor/mcp.json</code> for all projects or <code>.cursor/mcp.json</code> inside a repository. Both use <code>mcpServers</code>. When names collide, project settings take precedence. Save and restart Cursor, then check the server and tool list in its MCP interface. <a class="inline-link" href="./mcp-json-vs-toml-config-guide.html#cursor-mcp">Cursor JSON example</a> · <a class="inline-link" href="https://prod.cursor.com/help/customization/mcp">Cursor docs</a></p>
+      <h3 id="codex-mcp">Codex MCP config</h3>
+      <p>The default file is <code>~/.codex/config.toml</code>, with a <code>[mcp_servers.name]</code> section per server. With a separate <code>CODEX_HOME</code>, look for <code>config.toml</code> in that directory. Run <code>codex mcp list</code> to check the CLI configuration and open the client you use to confirm it loaded the tools. <a class="inline-link" href="./mcp-json-vs-toml-config-guide.html#codex-mcp">Codex TOML example</a> · <a class="inline-link" href="https://developers.openai.com/codex/mcp">Codex docs</a></p>
+    </section>
     <div class="callout" role="note">
       <div class="callout-title">Three Key Rules First</div>
       <div class="callout-list">
@@ -665,14 +679,11 @@ curl -s http://127.0.0.1:8420/health</code></pre>
       </div>
 
       <h3>Project &amp; Install Disambiguation</h3>
-      <p>When searching online, note that <strong>Senrelay</strong> (<a class="inline-link" href="https://github.com/qingsongcui/ContextCore" target="_blank" rel="noopener noreferrer">github.com/qingsongcui/ContextCore</a>) is unrelated to third-party projects named <code>context-core.dev</code> or the PyPI package <code>contextcore</code>. Install Senrelay (<code>v1.0.0-beta.2</code>, <code>$0</code> MIT License) on Apple Silicon macOS via Homebrew Cask and clear quarantine once:</p>
-      <pre class="code-block"><code><span class="code-comment"># 1. Install on Apple Silicon macOS 14.0+ via Homebrew Cask</span>
-brew install --cask qingsongcui/tap/senrelay
-
-<span class="code-comment"># 2. Clear ad-hoc Beta quarantine after moving to /Applications</span>
+      <p>When searching online, note that <strong>Senrelay</strong> (<a class="inline-link" href="https://github.com/qingsongcui/ContextCore" target="_blank" rel="noopener noreferrer">github.com/qingsongcui/ContextCore</a>) is unrelated to third-party projects named <code>context-core.dev</code> or the PyPI package <code>contextcore</code>. <a class="inline-link" data-macos-download href="https://github.com/qingsongcui/ContextCore/releases/download/v1.0.0-beta.4/Senrelay-macOS.zip">Download macOS Beta.4</a> for Apple Silicon (<code>$0</code>, MIT License), extract it to Applications, then follow the first-launch commands.</p>
+      <pre class="code-block"><code><span class="code-comment"># 1. Clear ad-hoc Beta quarantine after moving to /Applications</span>
 xattr -cr /Applications/Senrelay.app
 
-<span class="code-comment"># 3. Confirm local loopback service health (desktop 8420 / source dev 18420)</span>
+<span class="code-comment"># 2. Confirm local loopback service health (desktop 8420 / source dev 18420)</span>
 curl -s http://127.0.0.1:8420/health</code></pre>
       <p>If your team works on Windows or Linux, skip Senrelay and start with Git-committed <code>AGENTS.md</code> and <code>CLAUDE.md</code> ($0)—or read our <a class="inline-link" href="./compare.html">5-way context comparison</a> and <a class="inline-link" href="./relay-workflow.html">cross-agent relay guide</a>.</p>
     </section>

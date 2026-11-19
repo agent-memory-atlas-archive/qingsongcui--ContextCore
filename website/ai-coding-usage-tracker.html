@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#121412">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Claude Code 与 Codex 用量统计、Token 和额度 — Senrelay 续境</title>
+  <meta name="description" content="查看已观测的 Claude Code 与 Codex Token 用量、请求重试和估算费用。区分本机用量、订阅额度、服务商余额与实际账单。">
+  <meta property="og:type" content="article">
+  <meta property="og:locale" content="zh_CN">
+  <meta property="og:site_name" content="Senrelay · 续境">
+  <meta property="og:title" content="Claude Code 与 Codex 用量统计、Token 和额度 — Senrelay 续境">
+  <meta property="og:description" content="查看已观测的 Claude Code 与 Codex Token 用量、请求重试和估算费用。区分本机用量、订阅额度、服务商余额与实际账单。">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Claude Code 与 Codex 用量统计、Token 和额度 — Senrelay 续境">
+  <meta name="twitter:description" content="查看已观测的 Claude Code 与 Codex Token 用量、请求重试和估算费用。区分本机用量、订阅额度、服务商余额与实际账单。">
+  <!-- deployment-metadata -->
+  <link rel="icon" href="./favicon.ico" sizes="48x48">
+  <link rel="icon" href="./assets/icon-192.png" type="image/png" sizes="192x192">
+  <link rel="apple-touch-icon" href="./assets/apple-touch-icon.png" sizes="180x180">
+  <link rel="stylesheet" href="./assets/site.css">
+  <link rel="stylesheet" href="./assets/workbench-guides.css">
+</head>
+<body>
+  <a class="skip" href="#main" data-en="Skip to main content">跳到主要内容</a>
+  <header class="site-header">
+    <div class="header wrap">
+      <a class="brand" href="./" aria-label="Senrelay 续境首页" data-aria-en="Senrelay home">
+        <img class="brand-symbol" src="./assets/senrelay-logo-display-v1.png" width="28" height="35" decoding="async" alt="" aria-hidden="true">
+        Senrelay<span class="brand-cn" data-en="">· 续境</span>
+      </a>
+      <nav aria-label="页面导航" data-aria-en="Page navigation">
+        <a href="./" data-en="Home">首页</a>
+        <a href="./agent-management.html" data-en="Agent Management">Agent 管理</a>
+        <a href="./hosts.html" data-en="Host Config">宿主配置</a>
+        <a href="./guide.html" data-en="Setup Guide">运行指南</a>
+      </nav>
+      <div class="header-tools"><div class="language-switch" role="group" aria-label="语言">
+        <a href="./ai-coding-usage-tracker.html" data-lang="zh" aria-current="page" lang="zh-CN">中</a>
+        <a href="./en/ai-coding-usage-tracker.html" data-lang="en" lang="en">EN</a>
+      </div></div>
+    </div>
+  </header>
+  <main id="main" class="wrap workbench-guide">
+    <header class="workbench-guide-header">
+      <h1 data-en="Claude Code and Codex Usage Tracker for Mac — Senrelay">Claude Code 与 Codex 用量统计、Token 和额度 — Senrelay 续境</h1>
+      <p class="guide-lead" data-en="Track observed Claude Code and Codex token usage, retries, and estimated costs on your Mac. Check account quotas separately and export request attempts as CSV.">查看已观测的 Claude Code 与 Codex Token 用量、请求重试和估算费用。区分本机用量、订阅额度、服务商余额与实际账单。</p>
+      <p class="workbench-updated" data-en="Updated November 19, 2026 · Senrelay maintainers">更新于 2026-11-19 · Senrelay 维护者</p>
+    </header>
+    <div data-guide-section="zh" lang="zh-CN">
+<section id="usage-vs-quota">
+  <h2>用量、费用、额度分别怎么查？</h2>
+  <dl class="workbench-definitions">
+    <div><dt>Token 用量</dt><dd>按助手、模型或项目查看已观测的输入、输出与缓存 Token。来源是已授权并可解析的原生日志，以及通过 Senrelay 本机路由的调用。没有记录的用量显示未知。</dd></div>
+    <div><dt>费用估算</dt><dd>按已知计费模型和定价版本计算部分可估算的成本，按币种分开展示。实际扣款以服务商账单为准。</dd></div>
+    <div><dt>订阅额度与余额</dt><dd>订阅窗口还剩多少、账户余额还有多少，需要去相应来源查询。在「账号额度」中刷新已支持的来源，或打开官方用量页。</dd></div>
+  </dl>
+</section>
+
+<section id="claude-code-usage">
+  <h2>如何查看 Claude Code 用量和订阅额度？</h2>
+  <p>在「用量与性能」选 Claude Code 和日期范围，核对已有来源的 Token 和请求。要查 Claude Code 当前订阅窗口与重置时间，在原生 Claude Code 中输入 <code>/usage</code> 或打开官方用量页。<a href="https://code.claude.com/docs/en/costs#using-the-usage-command">Claude Code 官方用量说明</a>。</p>
+</section>
+
+<section id="codex-usage">
+  <h2>如何查看 Codex 用量、订阅额度和 API 费用？</h2>
+  <p>在「用量与性能」筛选 Codex，进入「请求」查看已观测的用量。在「账号额度」中选择「读取 Codex 额度」，从当前本机登录的 Codex 账号查询。如果需要核对 OpenAI API 实际费用，查看对应组织的官方 API 用量和账单。<a href="https://platform.openai.com/usage">OpenAI API 用量面板</a>。</p>
+</section>
+
+<section id="request-retries">
+  <h2>为什么一个请求会有多次尝试？</h2>
+  <p>例如，本机路由先请求首选服务商并收到 <code>429</code>，随后同一请求切到备用服务商并成功。账本显示 <strong>1 个逻辑请求、2 次尝试</strong>。展开详情可核对失败原因、实际使用的模型、Token 和费用估算。按当前筛选导出 CSV，可以逐条查看尝试。<a href="./agent-management.html#provider-switching">查看助手与服务商配置</a>。</p>
+</section>
+
+<section id="faq">
+  <h2>常见问题</h2>
+  <div class="workbench-faq">
+    <details><summary>用量统计会覆盖每一次 Claude Code 或 Codex 调用吗？</summary><p>覆盖范围取决于已授权且可解析的日志，以及经过本机路由的请求。查看「来源与定价」中的来源信息，缺少记录时以未知显示。</p></details>
+    <details><summary>换算出的费用就是订阅扣款吗？</summary><p>费用估算根据可观测的 Token 和生效定价计算。订阅额度、API 实际扣费和服务商余额分别查询。</p></details>
+    <details><summary>可以查看哪些第三方余额或预算？</summary><p>已支持使用本机授权查询 DeepSeek 和 Moonshot Kimi 余额及 OpenRouter 的密钥预算。OpenRouter 账户余额另需获权的管理密钥。每项显示查询来源与更新时间。</p></details>
+  </div>
+</section>
+
+<section id="sources">
+  <h2>适用版本与资料</h2>
+  <p>功能以 Senrelay v1.0.0-beta.4 为准，适用于 macOS 14.0 及以上的 Apple Silicon Mac。Senrelay 免费开源，模型服务的计量与收费遵循各自的账户和账单。<a href="https://github.com/qingsongcui/ContextCore/releases/tag/v1.0.0-beta.4">Beta.4 发布记录与安装包</a> · <a href="https://github.com/qingsongcui/ContextCore/blob/v1.0.0-beta.4/app/backend/app/services/quota_readers.py">发布版额度数据来源</a> · <a href="./guide.html">Senrelay 安装指南</a>。</p>
+</section>
+    </div>
+    <div data-guide-section="en" lang="en">
+<section id="usage-vs-quota">
+  <h2>Where do I check tokens, estimated costs, and quotas?</h2>
+  <dl class="workbench-definitions">
+    <div><dt>Token usage</dt><dd>Review observed input, output, and cache tokens by agent, model, or project. Coverage comes from authorized, parsable native logs and requests seen by Senrelay's local routing. Missing data stays unknown.</dd></div>
+    <div><dt>Estimated API cost</dt><dd>Estimates use the known billing model and rate version and keep currencies separate. Check your provider invoice for actual charges.</dd></div>
+    <div><dt>Subscription limits and balances</dt><dd>Use Account Quotas to refresh supported sources or open the official usage page. Subscription windows and provider balances follow their respective accounts.</dd></div>
+  </dl>
+</section>
+
+<section id="claude-code-usage">
+  <h2>How do I check Claude Code usage and subscription limits?</h2>
+  <p>In Usage &amp; Metrics, select Claude Code and a date range to review the requests and tokens Senrelay has observed. For Claude Code's current subscription windows and reset times, run <code>/usage</code> in Claude Code or open its official usage page. <a href="https://code.claude.com/docs/en/costs#using-the-usage-command">Official Claude Code usage guide</a>.</p>
+</section>
+
+<section id="codex-usage">
+  <h2>How do I track Codex usage, account limits, and API cost?</h2>
+  <p>Filter Usage &amp; Metrics to Codex and open Requests for observed usage. Use Read Codex quota in Account Quotas to check the locally signed-in Codex account. For actual OpenAI API charges, check the organization that pays for the API calls. <a href="https://platform.openai.com/usage">Official OpenAI API usage dashboard</a>.</p>
+</section>
+
+<section id="request-retries">
+  <h2>Why does one request have multiple attempts?</h2>
+  <p>For example, the primary provider can return <code>429</code> and a fallback provider can complete the request. The ledger shows <strong>one logical request and two attempts</strong>. Expand it to check the failure, actual model, token counts, and available cost estimates. Export the filtered attempts as CSV for a row-by-row view. <a href="./agent-management.html#provider-switching">See agent and provider configuration</a>.</p>
+</section>
+
+<section id="faq">
+  <h2>Frequently asked questions</h2>
+  <div class="workbench-faq">
+    <details><summary>Does the tracker cover every Claude Code or Codex call?</summary><p>Coverage depends on authorized, parsable logs and requests that use the local route. Open Sources and pricing to check the observation sources. Missing usage stays unknown.</p></details>
+    <details><summary>Are estimated costs the charges on my subscription?</summary><p>Estimated costs use observed tokens and the effective rate. Subscription quotas, actual API charges, and provider balances come from their own sources.</p></details>
+    <details><summary>Which third-party balances or budgets can I check?</summary><p>Supported sources include authorized DeepSeek and Moonshot Kimi balances and an OpenRouter key budget. OpenRouter account balance needs an authorized management key. Each lookup shows its source and observation time.</p></details>
+  </div>
+</section>
+
+<section id="sources">
+  <h2>Version and sources</h2>
+  <p>This guide covers Senrelay v1.0.0-beta.4 on Apple Silicon, macOS 14.0 or later. Senrelay is free and open source. Model usage and charges follow your provider's account and billing terms. <a href="https://github.com/qingsongcui/ContextCore/releases/tag/v1.0.0-beta.4">Beta.4 release and download</a> · <a href="https://github.com/qingsongcui/ContextCore/blob/v1.0.0-beta.4/app/backend/app/services/quota_readers.py">Versioned quota sources</a> · <a href="./guide.html">Senrelay setup guide</a>.</p>
+</section>
+    </div>
+  </main>
+  <footer class="footer wrap">
+    <a class="brand" href="./" aria-label="Senrelay 续境首页" data-aria-en="Senrelay home">
+      <img class="brand-symbol" src="./assets/senrelay-logo-display-v1.png" width="26" height="33" loading="lazy" alt="" aria-hidden="true">
+      Senrelay<span class="brand-cn" data-en="">· 续境</span>
+    </a>
+    <div>
+      <a href="./agent-management.html" data-en="Agent Management">Agent 管理</a>
+      <a href="./guide.html" data-en="Setup Guide">运行指南</a>
+      <a href="https://github.com/qingsongcui/ContextCore">GitHub</a>
+    </div>
+  </footer>
+</body>
+</html>

@@ -47,7 +47,7 @@ Styles are sourced under `assets/css/` and bundled by `scripts/css-bundle.mjs`; 
 ## Pages and Bilingual Coverage
 
 - `index.html` (`en/index.html` via `assets/i18n.js`): Product showcase, 6-step full-transcript relay architecture, dual-tier memory workspace, 6+9 host matrix, official dated Fact Sheet (`#fact-sheet`), and 9-item native `<details>` FAQ.
-- `guide.html` (`en/guide.html`): Apple Silicon macOS install (`brew install --cask qingsongcui/tap/senrelay` / `v1.0.0-beta.2` zip / `xattr -cr`), source dev mode, MCP key (`contextcore` on `/mcp/`) vs `/contextcore` skill, security boundaries, and 3-item troubleshooting FAQ (`FAQPage` schema).
+- `guide.html` (`en/guide.html`): Apple Silicon macOS install (explicit published macOS ZIP / checksum / ad-hoc first-launch steps), source dev mode, MCP key (`contextcore` on `/mcp/`) vs `/contextcore` skill, security boundaries, and 3-item troubleshooting FAQ (`FAQPage` schema).
 - `compare.html` (`en/compare.html`): Honest 5-option comparison (`AGENTS.md`, Cloud/Docker Memory MCP, Senrelay ranked #3, Dotfiles, Single IDE) with interactive setup picker, `#option-1`..`#option-5` ItemList schema, and 6-item decision FAQ.
 - `llms.txt` & `llms-full.txt`: Pure-English summary header plus full-transcript relay specification, 6+9 host matrix, 5-way comparison table, and Chinese core summary (`续境` / `ContextCore`).
 

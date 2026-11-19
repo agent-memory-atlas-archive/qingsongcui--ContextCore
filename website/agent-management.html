@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#121412">
+  <meta name="robots" content="noindex, nofollow">
+  <title>macOS AI 编程助手管理与 MCP 配置 — Senrelay 续境</title>
+  <meta name="description" content="在一台 Mac 上管理 Claude Code、Codex、Cursor 等六类 AI 编程助手。导入受支持的原生配置，预览 MCP、Skills、规则和供应商变更。">
+  <meta property="og:type" content="article">
+  <meta property="og:locale" content="zh_CN">
+  <meta property="og:site_name" content="Senrelay · 续境">
+  <meta property="og:title" content="macOS AI 编程助手管理与 MCP 配置 — Senrelay 续境">
+  <meta property="og:description" content="在一台 Mac 上管理 Claude Code、Codex、Cursor 等六类 AI 编程助手。导入受支持的原生配置，预览 MCP、Skills、规则和供应商变更。">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="macOS AI 编程助手管理与 MCP 配置 — Senrelay 续境">
+  <meta name="twitter:description" content="在一台 Mac 上管理 Claude Code、Codex、Cursor 等六类 AI 编程助手。导入受支持的原生配置，预览 MCP、Skills、规则和供应商变更。">
+  <!-- deployment-metadata -->
+  <link rel="icon" href="./favicon.ico" sizes="48x48">
+  <link rel="icon" href="./assets/icon-192.png" type="image/png" sizes="192x192">
+  <link rel="apple-touch-icon" href="./assets/apple-touch-icon.png" sizes="180x180">
+  <link rel="stylesheet" href="./assets/site.css">
+  <link rel="stylesheet" href="./assets/workbench-guides.css">
+</head>
+<body>
+  <a class="skip" href="#main" data-en="Skip to main content">跳到主要内容</a>
+  <header class="site-header">
+    <div class="header wrap">
+      <a class="brand" href="./" aria-label="Senrelay 续境首页" data-aria-en="Senrelay home">
+        <img class="brand-symbol" src="./assets/senrelay-logo-display-v1.png" width="28" height="35" decoding="async" alt="" aria-hidden="true">
+        Senrelay<span class="brand-cn" data-en="">· 续境</span>
+      </a>
+      <nav aria-label="页面导航" data-aria-en="Page navigation">
+        <a href="./" data-en="Home">首页</a>
+        <a href="./ai-coding-usage-tracker.html" data-en="Usage and costs">用量与费用</a>
+        <a href="./hosts.html" data-en="Host Config">宿主配置</a>
+        <a href="./guide.html" data-en="Setup Guide">运行指南</a>
+      </nav>
+      <div class="header-tools"><div class="language-switch" role="group" aria-label="语言">
+        <a href="./agent-management.html" data-lang="zh" aria-current="page" lang="zh-CN">中</a>
+        <a href="./en/agent-management.html" data-lang="en" lang="en">EN</a>
+      </div></div>
+    </div>
+  </header>
+  <main id="main" class="wrap workbench-guide">
+    <header class="workbench-guide-header">
+      <h1 data-en="AI Coding Agent Manager for Mac — Senrelay">macOS AI 编程助手管理与 MCP 配置 — Senrelay 续境</h1>
+      <p class="guide-lead" data-en="Manage six AI coding agents on one Mac. Review native Claude Code, Cursor and Codex settings, share MCP and Skills, and switch supported providers.">在一台 Mac 上管理 Claude Code、Codex、Cursor 等六类 AI 编程助手。导入受支持的原生配置，预览 MCP、Skills、规则和供应商变更。</p>
+      <p class="workbench-updated" data-en="Updated November 19, 2026 · Senrelay maintainers">更新于 2026-11-19 · Senrelay 维护者</p>
+    </header>
+    <div data-guide-section="zh" lang="zh-CN">
+<section id="what-it-manages">
+  <h2>六个助手，一份共享资源库</h2>
+  <p>Senrelay 的 Agent 管理页包含 Claude Code、Codex、Cursor、Antigravity、Oh My Pi（OMP）和 OpenCode。CLI、桌面端等入口按所属助手归组。你可以复用一份 MCP、Skill、规则或供应商定义，并选择写入哪些助手的原生配置。<a href="./hosts.html">查看 Claude Code、Cursor 与 Codex 的 MCP 配置路径</a>。</p>
+  <p>默认使用同一份用户配置时，Codex CLI 和桌面端在同一个配置视图管理。CLI 设了独立的 <code>CODEX_HOME</code> 时分别处理。Antigravity 的桌面端与 CLI 共用受支持的 MCP 和 Skills 路径，规则文件按入口分别管理。<a href="https://learn.chatgpt.com/docs/config-file/config-reference">Codex 官方配置参考</a>。</p>
+</section>
+
+<section id="mcp-config-sync">
+  <h2>如何同步 Claude Code、Cursor 和 Codex 的 MCP 配置？</h2>
+  <ol>
+    <li>在 Agent 管理中选定来源助手，打开「读取原生配置」，选择 MCP，核对将导入的条目。</li>
+    <li>在「共享资源」选中准备分发的定义和目标助手，逐一预览文件差异，确认后应用。有凭据的资源在目标端需要可用的本机绑定。</li>
+    <li>核对写入后的文件，在目标助手中重新加载并查看工具列表。遇到冲突时检查外部改动，并可用更改记录中的快照预览恢复。</li>
+  </ol>
+  <p>同一个 MCP 条目已经存在时，可根据预览选择接管受支持的原生配置。需要核对 JSON 和 TOML 写法时，先看 <a href="./mcp-json-vs-toml-config-guide.html">MCP JSON 与 TOML 示例</a>。</p>
+</section>
+
+<section id="provider-switching">
+  <h2>如何切换 Claude Code、Codex 或 OpenCode 的模型供应商？</h2>
+  <p>选择助手后，在「模型与账号」手动添加服务商，选用内置预设，或预览导入原生配置。核对模型、接口协议与账号后应用，随后在助手里确认实际加载。配置变更可从更改记录撤销。Cursor 的 API Key 与模型仍在 <strong>Cursor Settings → Models</strong> 中设置。<a href="https://code.claude.com/docs/en/settings">Claude Code 配置和优先级</a> · <a href="https://opencode.ai/docs/providers/">OpenCode 服务商文档</a> · <a href="https://cursor.com/help/models-and-usage/api-keys">Cursor API Key 文档</a>。</p>
+  <p>受支持的本机路由可配置首选与备用线路，或用模型别名聚合多个服务商。真实调用、重试和已知用量可在 <a href="./ai-coding-usage-tracker.html">AI 编程用量页面</a> 核对。</p>
+</section>
+
+<section id="faq">
+  <h2>常见问题</h2>
+  <div class="workbench-faq">
+    <details><summary>需要 CC Switch 才能管理助手吗？</summary><p>Senrelay 可独立运行。从已选助手的原生配置、Senrelay 预设或手动定义开始，就可以在共享资源库中配置并应用变更。</p></details>
+    <details><summary>能共享 Claude Code 和 Codex 的 Skills 吗？</summary><p>可以。选择已导入的 Skill 和目标助手，预览写入范围后应用。可按受支持的安装模式部署，最终加载应在各助手中分别核对。</p></details>
+    <details><summary>配置备份能带走账号密钥吗？</summary><p>Senrelay 的配置备份默认省略密钥和授权会话。恢复前可核对差异，需要密钥的定义恢复后再连接本机钥匙串或重新授权。</p></details>
+  </div>
+</section>
+
+<section id="sources">
+  <h2>适用版本与资料</h2>
+  <p>以上适用于 macOS 14.0 及以上的 Apple Silicon Mac，以及 Senrelay v1.0.0-beta.4 的 Agent 管理页。各助手的原生功能和写入范围以支持矩阵为准。<a href="https://github.com/qingsongcui/ContextCore/releases/tag/v1.0.0-beta.4">Beta.4 发布记录与安装包</a> · <a href="https://github.com/qingsongcui/ContextCore/blob/v1.0.0-beta.4/docs/SPECIFICATION.md#5-model-and-tool-management-d060-d061">发布版配置管理说明</a> · <a href="./guide.html">Senrelay 安装指南</a>。</p>
+</section>
+    </div>
+    <div data-guide-section="en" lang="en">
+<section id="what-it-manages">
+  <h2>Six coding agents, one resource library</h2>
+  <p>Senrelay groups Claude Code, Codex, Cursor, Antigravity, Oh My Pi (OMP), and OpenCode into six workspaces. Reuse a provider, MCP server, Skill, or instruction definition and choose which assistants receive it in their native configuration. <a href="./hosts.html">See the Claude Code, Cursor, and Codex MCP config paths</a>.</p>
+  <p>Codex CLI and desktop share a configuration view when both use the default user-level configuration. A separate <code>CODEX_HOME</code> for the CLI is managed separately. Antigravity's desktop and CLI entries share supported MCP and Skills paths, with rules managed per entry. <a href="https://learn.chatgpt.com/docs/config-file/config-reference">Official Codex configuration reference</a>.</p>
+</section>
+
+<section id="mcp-config-sync">
+  <h2>How do I sync MCP configs across Claude Code, Cursor, and Codex?</h2>
+  <ol>
+    <li>Open Agent Management, choose the source agent, and review the MCP entries in the native configuration preview.</li>
+    <li>In Shared Resources, select the definitions and target agents. Review each file diff before applying. Attach local credentials wherever the resource requires them.</li>
+    <li>Check the written file, then reload the target agent and check its tool list. If a file changed externally, review the conflict and use the change history to preview a restore.</li>
+  </ol>
+  <p>For an existing MCP entry, the preview can show whether its supported native configuration can be taken over. Check the <a href="./mcp-json-vs-toml-config-guide.html">MCP JSON and TOML examples</a> to compare the file formats.</p>
+</section>
+
+<section id="provider-switching">
+  <h2>How do I switch providers in Claude Code, Codex, or OpenCode?</h2>
+  <p>Choose a supported agent in Models and Accounts. Add the provider manually, start with a preset, or preview a native import. Confirm the model, API protocol, and account before applying. Check that the agent loaded the change, and use the change history if you need to restore the previous setup. Cursor's API keys and models remain in <strong>Cursor Settings → Models</strong>. <a href="https://code.claude.com/docs/en/settings">Claude Code settings precedence</a> · <a href="https://opencode.ai/docs/providers/">OpenCode provider settings</a> · <a href="https://cursor.com/help/models-and-usage/api-keys">Cursor API key setup</a>.</p>
+  <p>Supported local routing can use a primary and fallback provider or group models under aliases. To check the provider that handled a request and any retries, open the <a href="./ai-coding-usage-tracker.html">AI coding usage tracker</a>.</p>
+</section>
+
+<section id="faq">
+  <h2>Frequently asked questions</h2>
+  <div class="workbench-faq">
+    <details><summary>Do I need CC Switch to manage coding agents?</summary><p>Senrelay runs independently. Start from the selected agent's native configuration, a Senrelay preset, or a manual definition, then review and apply changes from the shared resource library.</p></details>
+    <details><summary>Can I share Claude Code and Codex Skills?</summary><p>Yes. Select the imported Skill and targets, then review the change before applying. Check how each agent loads the Skill after installing with a supported mode.</p></details>
+    <details><summary>Do configuration backups include API keys?</summary><p>Senrelay configuration backups omit secrets and authorization sessions by default. Review the differences before restoring. Reattach Keychain credentials or authorize the account again where required.</p></details>
+  </div>
+</section>
+
+<section id="sources">
+  <h2>Version and sources</h2>
+  <p>This guide covers Agent Management in Senrelay v1.0.0-beta.4 on Apple Silicon, macOS 14.0 or later. See the host reference for supported write targets. <a href="https://github.com/qingsongcui/ContextCore/releases/tag/v1.0.0-beta.4">Beta.4 release and download</a> · <a href="https://github.com/qingsongcui/ContextCore/blob/v1.0.0-beta.4/docs/SPECIFICATION.md#5-model-and-tool-management-d060-d061">Versioned configuration specification</a> · <a href="./guide.html">Senrelay setup guide</a>.</p>
+</section>
+    </div>
+  </main>
+  <footer class="footer wrap">
+    <a class="brand" href="./" aria-label="Senrelay 续境首页" data-aria-en="Senrelay home">
+      <img class="brand-symbol" src="./assets/senrelay-logo-display-v1.png" width="26" height="33" loading="lazy" alt="" aria-hidden="true">
+      Senrelay<span class="brand-cn" data-en="">· 续境</span>
+    </a>
+    <div>
+      <a href="./ai-coding-usage-tracker.html" data-en="Usage and costs">用量与费用</a>
+      <a href="./guide.html" data-en="Setup Guide">运行指南</a>
+      <a href="https://github.com/qingsongcui/ContextCore">GitHub</a>
+    </div>
+  </footer>
+</body>
+</html>

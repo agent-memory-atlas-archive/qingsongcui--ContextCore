@@ -2,6 +2,9 @@ import assert from 'node:assert/strict';
 import { readFile, access } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import brand from '../brand.config.mjs';
+
+const releaseDownloadUrl = `${brand.github}/releases/download/v${brand.releaseVersion}/Senrelay-macOS.zip`;
 
 const root = fileURLToPath(new URL('../dist/', import.meta.url));
 const enHtml = await readFile(path.join(root, 'index.html'), 'utf8');
@@ -128,7 +131,7 @@ for (const [mdLabel, mdDoc] of [
   ['relay-workflow.md', relayMd],
 ]) {
   assert.ok(mdDoc.includes('$0') && mdDoc.includes('MIT'), `${mdLabel} includes $0 MIT pricing`);
-  assert.ok(mdDoc.includes('1.0.0-beta.2'), `${mdLabel} includes current version`);
+  assert.ok(mdDoc.includes(brand.releaseVersion), `${mdLabel} includes current version`);
   assert.ok(!/<(?:div|table|section|script|svg)\b/i.test(mdDoc), `${mdLabel} contains clean Markdown without raw HTML containers`);
 }
 
@@ -272,7 +275,7 @@ assert.ok(enCompareGraph['@graph'][1].itemListElement[2].url.includes('#option-3
 assert.ok(!enCompareGraph['@graph'][1].itemListElement[0].name.includes('ContextCore'), 'own product NOT ranked #1 in en ItemList');
 assert.equal(enCompareGraph['@graph'][2].mainEntity.length, 6, 'six FAQ entities in en compare JSON-LD');
 
-// SEO / GEO Baseline & Anti-Regression Veto Guardrails (Titles <=60 chars, Meta descriptions tight, Version aligned to v1.0.0-beta.2, 4-Element Hero, Plain-Text $0 Pricing, Dated Fact Sheet, Real Limitations, Creator E-E-A-T, Internal Links & Content Floor)
+// SEO / GEO Baseline & Anti-Regression Veto Guardrails (Titles <=60 chars, Meta descriptions tight, version aligned to the published release, 4-Element Hero, Plain-Text $0 Pricing, Dated Fact Sheet, Real Limitations, Creator E-E-A-T, Internal Links & Content Floor)
 for (const [label, doc] of [
   ['index.html', enHtml],
   ['zh/index.html', html],
@@ -309,18 +312,40 @@ for (const [label, doc] of [
 for (const [label, doc] of [['index.html', html], ['en/index.html', enHtml]]) {
   assert.match(doc, /id="fact-sheet"/, `Official Fact Sheet table exists in ${label}`);
   assert.match(doc, /id="about-privacy"/, `About & Privacy box exists in ${label}`);
-  assert.ok(doc.includes('1.0.0-beta.2'), `current version 1.0.0-beta.2 appears in ${label}`);
+  assert.ok(doc.includes(brand.releaseVersion), `current version ${brand.releaseVersion} appears in ${label}`);
   assert.ok(doc.includes('127.0.0.1:8420/mcp/') && doc.includes('contextcore'), `MCP endpoint & key contextcore documented in ${label}`);
   const bodyInternalLinks = [...doc.matchAll(/<a\b[^>]*class="inline-link"[^>]*href="(?:#|\.?\/(?:guide|compare|hosts|relay-workflow)\.html)[^"]*"/g)];
   assert.ok(bodyInternalLinks.length >= 6, `at least 6 descriptive inline internal links in ${label} (found ${bodyInternalLinks.length})`);
 }
 
 for (const [label, doc] of [['guide.html', guide], ['en/guide.html', enGuide], ['hosts.html', hosts], ['en/hosts.html', enHosts], ['relay-workflow.html', relay], ['en/relay-workflow.html', enRelay]]) {
-  assert.ok(doc.includes('1.0.0-beta.2'), `current version 1.0.0-beta.2 appears in ${label}`);
+  assert.ok(doc.includes(brand.releaseVersion), `current version ${brand.releaseVersion} appears in ${label}`);
   assert.ok(doc.includes('127.0.0.1:8420/mcp/') && doc.includes('contextcore'), `MCP endpoint & key contextcore documented in ${label}`);
   for (const host of ['Claude Code', 'Codex', 'Cursor', 'Antigravity', 'OMP', 'OpenCode']) {
     assert.ok(doc.includes(host), `core host ${host} appears in ${label}`);
   }
+}
+
+for (const [label, doc] of [
+  ['index.html', enHtml], ['zh/index.html', html],
+  ['guide.html', enGuide], ['zh/guide.html', guide],
+  ['compare.html', enCompare], ['zh/compare.html', compare],
+  ['hosts.html', enHosts], ['zh/hosts.html', hosts],
+  ['relay-workflow.html', enRelay], ['zh/relay-workflow.html', relay],
+]) {
+  const downloads = [...doc.matchAll(/<a\b[^>]*\bdata-macos-download\b[^>]*>/g)];
+  assert.ok(downloads.length > 0, `visible macOS download link in ${label}`);
+  for (const [anchor] of downloads) {
+    assert.equal(anchor.match(/\bhref="([^"]+)"/)?.[1], releaseDownloadUrl, `current archive link in ${label}`);
+  }
+  for (const [, url] of doc.matchAll(/\bhref="([^"]+\/releases\/download\/[^/]+\/Senrelay[^"]*\.zip)"/g)) {
+    assert.equal(url, releaseDownloadUrl, `no stale installer link in ${label}`);
+  }
+}
+for (const [label, schema] of [['Chinese', graph], ['English', enGraph]]) {
+  const software = schema['@graph'].find(node => node['@type'] === 'SoftwareApplication');
+  assert.equal(software.softwareVersion, brand.releaseVersion, `${label} schema version`);
+  assert.equal(software.downloadUrl, releaseDownloadUrl, `${label} schema download target`);
 }
 
 assert.ok(hosts.includes('~/.claude.json') && hosts.includes('~/.openclaw/openclaw.json') && hosts.includes('~/.config/opencode/opencode.json'), 'hosts.html verifies concrete config file paths');
@@ -356,11 +381,12 @@ assert.match(llms, /pricing\.md/);
 assert.match(llms, /hosts\.md/);
 assert.match(llms, /hosts\.html/);
 assert.match(llms, /relay-workflow\.html/);
-assert.match(llms, /brew install --cask qingsongcui\/tap\/senrelay/);
+assert.ok(llms.includes(releaseDownloadUrl), 'llms.txt links directly to the published macOS archive');
 assert.match(llms, /pip install contextcore/);
 assert.match(llms, /http:\/\/127\.0\.0\.1:8420\/mcp\//);
 assert.match(llms, /senrelay-mcp/);
-assert.ok(llms.includes('1.0.0-beta.2') && !llms.includes('1.0.0-beta.1'), 'llms.txt reflects v1.0.0-beta.2');
+assert.ok(llms.includes(brand.releaseVersion), `llms.txt reflects v${brand.releaseVersion}`);
+assert.ok(llmsFull.includes(releaseDownloadUrl), 'llms-full.txt links directly to the published macOS archive');
 assert.ok(!llms.includes('💡') && !llms.includes('📌'), 'no decorative emojis in llms.txt');
 assert.match(llmsFull, /must_not_execute=true/);
 assert.match(llmsFull, /read_conversation_messages/);
@@ -374,12 +400,29 @@ assert.ok(!llmsFull.includes('6-point'), 'no stale 6-point handoff card referenc
 const production = enHtml.includes('content="index, follow"');
 const expectedClarityId = (process.env.CLARITY_ID || '').trim();
 const addedDocs = [];
-for (const fileName of ['claude-code-memory.html', 'mcp-json-vs-toml-config-guide.html']) {
+const featureGuides = ['agent-management.html', 'ai-coding-usage-tracker.html'];
+for (const fileName of ['claude-code-memory.html', 'mcp-json-vs-toml-config-guide.html', ...featureGuides]) {
   for (const prefix of ['', 'zh/']) {
     const doc = await readFile(path.join(root, prefix, fileName), 'utf8');
     assert.equal((doc.match(/<h1\b/g) || []).length, 1, `${prefix}${fileName} has one primary heading`);
     assert.match(doc, /href="\.\/guide.html"/, 'new guides link to installation');
     assert.match(doc, prefix ? /<html lang="zh-CN"/ : /<html lang="en"/);
+    if (featureGuides.includes(fileName)) {
+      const jsonLd = JSON.parse(doc.match(/<script type="application\/ld\+json">([^<]+)<\/script>/)[1]);
+      const article = jsonLd['@graph'].find(node => node['@type'] === 'TechArticle');
+      assert.equal(article.datePublished, '2026-11-19');
+      assert.equal(article.inLanguage, prefix ? 'zh-CN' : 'en');
+      assert.equal(jsonLd['@graph'].find(node => node['@type'] === 'FAQPage').mainEntity.length, 3);
+      const mdFile = fileName.replace('.html', '.md');
+      const mirror = await readFile(path.join(root, prefix, mdFile), 'utf8');
+      assert.match(mirror, prefix ? /[\u4e00-\u9fff]/ : /Machine-Readable Markdown Mirror/);
+      assert.ok(llms.includes(prefix + mdFile), 'new language mirrors are discoverable in llms.txt');
+      if (production) {
+        const canonical = 'https://senrelay.com/' + prefix + fileName;
+        assert.ok(doc.includes('<link rel="canonical" href="' + canonical + '"'), 'guide points to its own canonical');
+        assert.ok(doc.includes('type="text/markdown" href="https://senrelay.com/' + prefix + mdFile + '"'), 'guide exposes a same-language mirror');
+      }
+    }
     addedDocs.push(doc);
   }
 }
@@ -411,11 +454,16 @@ if (production) {
   }
   const sitemap = await readFile(path.join(root, 'sitemap.xml'), 'utf8');
   assert.match(sitemap, /xmlns:xhtml="http:\/\/www\.w3\.org\/1999\/xhtml"/);
-  assert.equal((sitemap.match(/<url>/g) || []).length, 14, 'fourteen canonical URLs in sitemap.xml');
+  assert.equal((sitemap.match(/<url>/g) || []).length, deployedDocs.length, 'one canonical URL per built page');
   const lastmods = [...sitemap.matchAll(/<lastmod>(\d{4}-\d{2}-\d{2})<\/lastmod>/g)].map((m) => m[1]);
-  assert.equal(lastmods.length, 14, 'valid lastmod dates');
+  assert.equal(lastmods.length, deployedDocs.length, 'valid lastmod dates');
   assert.ok(lastmods.every((d) => d >= '2026-11-15'), 'sitemap lastmod dates >= 2026-11-15');
   assert.ok(sitemap.includes('/hosts.html') && sitemap.includes('/zh/hosts.html') && sitemap.includes('/relay-workflow.html'), 'sitemap includes English root and /zh/ URLs');
+  for (const fileName of featureGuides) {
+    assert.ok(sitemap.includes('<loc>https://senrelay.com/' + fileName + '</loc>'));
+    assert.ok(sitemap.includes('<loc>https://senrelay.com/zh/' + fileName + '</loc>'));
+    assert.ok(enHtml.includes('href="./' + fileName + '"') && html.includes('href="./' + fileName + '"'), 'both homepages link to the feature guide');
+  }
   assert.ok(!sitemap.includes('/en/'), 'sitemap excludes legacy /en/ redirect URLs');
   assert.match(sitemap, /xhtml:link rel="alternate" hreflang="en"/);
   const robots = await readFile(path.join(root, 'robots.txt'), 'utf8');

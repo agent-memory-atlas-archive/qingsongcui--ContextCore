@@ -7,7 +7,8 @@ import { bundleCss } from './css-bundle.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const out = path.join(root, 'dist');
-const RELEASE_VERSION = '1.0.0-beta.2';
+const RELEASE_VERSION = brand.releaseVersion;
+const releaseDownloadUrl = `${brand.github}/releases/download/v${RELEASE_VERSION}/Senrelay-macOS.zip`;
 const FALLBACK_LASTMOD = new Date().toISOString().slice(0, 10);
 const rawClarityId = (process.env.CLARITY_ID || '').trim();
 if (rawClarityId && !/^[a-zA-Z0-9]{6,24}$/.test(rawClarityId)) {
@@ -255,8 +256,8 @@ function buildHomepageSchema({ lang, pageUrl, siteDesc, appDesc, faqEntities, la
 
   const isEn = lang === 'en';
   const webSiteKeywords = isEn
-    ? [brand.name, 'ContextCore', 'cross-agent conversation relay', 'MCP config sync', 'Claude Code to Codex', 'Cursor MCP', 'macOS Apple Silicon developer workbench', 'AGENTS.md']
-    : [brand.name, brand.chineseName, 'ContextCore', '跨 Agent 对话接力', 'Claude Code 接力 Codex', 'MCP 配置同步', 'macOS 开发工作台'];
+    ? [brand.name, 'ContextCore', 'cross-agent conversation relay', 'MCP config sync', 'Claude Code to Codex', 'Cursor MCP', 'macOS Apple Silicon developer workbench', 'coding agent management', 'Claude Code and Codex usage', 'AGENTS.md']
+    : [brand.name, brand.chineseName, 'ContextCore', '跨 Agent 对话接力', 'Claude Code 接力 Codex', 'MCP 配置同步', 'AI 编程助手配置管理', 'Claude Code 与 Codex 用量', 'macOS 开发工作台'];
   const disambiguation = isEn
     ? `Local-first Apple Silicon macOS developer workbench by Qingsong Cui (github.com/qingsongcui/ContextCore) for /contextcore cross-agent relay and multi-host MCP sync; distinct from unrelated cloud context-core.dev, PyPI contextcore packages, and hardware relay parts.`
     : `由 Qingsong Cui（github.com/qingsongcui/ContextCore）维护的 Apple Silicon macOS 本地多 AI 编程助手接力与 MCP 配置工作台；与汽车继电器（relay sen）及第三方 context-core.dev、PyPI contextcore 包无关。`;
@@ -298,7 +299,7 @@ function buildHomepageSchema({ lang, pageUrl, siteDesc, appDesc, faqEntities, la
           image: new URL('assets/icon-192.png', site).href,
         }
       : {}),
-    downloadUrl: releaseTagUrl,
+    downloadUrl: releaseDownloadUrl,
     codeRepository: brand.github,
     sameAs: [brand.github, releaseTagUrl],
     license: `${brand.github}/blob/main/LICENSE`,
@@ -346,6 +347,7 @@ function buildGuideSchema({
   description,
   faqEntities = [],
   lastmod,
+  published = '2026-11-11',
   proficiencyLevel = 'Beginner',
 }) {
   const zhFullName = `${brand.name} · ${brand.chineseName}`;
@@ -368,7 +370,7 @@ function buildGuideSchema({
     headline,
     description,
     inLanguage: lang === 'en' ? 'en' : 'zh-CN',
-    datePublished: '2026-11-11',
+    datePublished: published,
     dateModified: lastmod,
     proficiencyLevel,
     author: { '@type': 'Person', '@id': creatorId, name: personNode.name },
@@ -653,7 +655,7 @@ function convertInlineHtmlToMd(fragment, basePageHref) {
     .trim();
 }
 
-function htmlMainToMarkdown({ docHtml, title, canonicalHref, lastmod }) {
+function htmlMainToMarkdown({ docHtml, title, canonicalHref, lastmod, lang = 'en' }) {
   const mainMatch = docHtml.match(/<main\b[^>]*>([\s\S]*?)<\/main>/i);
   let body = mainMatch ? mainMatch[1] : docHtml;
   const basePageHref = site ? canonicalHref : './';
@@ -759,6 +761,16 @@ function htmlMainToMarkdown({ docHtml, title, canonicalHref, lastmod }) {
 
   const pricingRef = site ? new URL('pricing.md', site).href : './pricing.md';
   const llmsFullRef = site ? new URL('llms-full.txt', site).href : './llms-full.txt';
+  if (lang === 'zh') {
+    const zhPricing = site ? pricingRef : '../pricing.md';
+    const zhReference = site ? llmsFullRef : '../llms-full.txt';
+    return `> 原文：${canonicalHref}
+> ${brand.name} · ${brand.chineseName} · v${RELEASE_VERSION} · 更新于 ${lastmod}
+> 免费开源 · MIT · [版本与适用范围](${zhPricing}) · [资料索引](${zhReference})
+
+${body}
+`;
+  }
   return `> **Machine-Readable Markdown Mirror** · Canonical HTML: ${canonicalHref}
 > **Product**: ${brand.name} (${brand.chineseName} · \`qingsongcui/ContextCore\`) · **Version**: \`v${RELEASE_VERSION}\` · **Updated**: \`${lastmod}\`
 > **Pricing & License**: **$0 (100% Free & Open Source under the MIT License, no signup)** · [Pricing & Limits](${pricingRef}) · [Extended Spec](${llmsFullRef})
@@ -933,7 +945,9 @@ async function buildBilingualDocPagePair({
   zhHref,
   enHref,
   mdHref,
+  zhMdHref,
   lastmod,
+  published,
   buildSchema,
   proficiencyLevel = 'Beginner',
 }) {
@@ -958,6 +972,7 @@ async function buildBilingualDocPagePair({
     description: zhDesc,
     faqEntities: extractFaqEntities(zhDoc),
     lastmod,
+    published,
     proficiencyLevel,
   });
   if (site) {
@@ -970,13 +985,18 @@ async function buildBilingualDocPagePair({
         canonicalHref: zhHref,
         zhHref,
         enHref,
-        mdHref,
+        mdHref: zhMdHref || mdHref,
         altOgLocale: 'en_US',
         imageAlt: zhTitle,
       }),
     )
     .replace('</head>', `  <script type="application/ld+json">${escapeJson(zhSchema)}</script>\n</head>`);
   await writeFile(path.join(out, 'zh', fileName), zhDoc);
+  if (zhMdHref) {
+    await writeFile(path.join(out, 'zh', mdFileName), htmlMainToMarkdown({
+      docHtml: zhDoc, title: zhTitle, canonicalHref: zhHref, lastmod, lang: 'zh',
+    }));
+  }
 
   let enDoc = removeElementByAttr(baseDocHtml, 'div', 'data-guide-section="zh"')
     .replace(/\s*<hr class="lang-divider">\s*/g, '\n')
@@ -1016,6 +1036,7 @@ async function buildBilingualDocPagePair({
     description: enDesc,
     faqEntities: extractFaqEntities(enDoc),
     lastmod,
+    published,
     proficiencyLevel,
   });
   if (site) {
@@ -1061,7 +1082,7 @@ const docPages = [
     mdFileName: 'guide.md',
     zhTitle: `${brand.name} · ${brand.chineseName} — 本地运行与使用指南`,
     enTitle: `${brand.name} — Local Setup & Workflow Guide`,
-    enDesc: `${brand.name} macOS Apple Silicon local guide ($0 MIT): Homebrew Cask install, xattr first launch, /contextcore relay, shared memory, and MCP sync.`,
+    enDesc: `${brand.name} macOS Apple Silicon local guide ($0 MIT): macOS ZIP download, xattr first launch, /contextcore relay, shared memory, and MCP sync.`,
     zhHref: zhGuideHref,
     enHref: enGuideHref,
     mdHref: guideMdHref,
@@ -1108,7 +1129,8 @@ const docPages = [
   },
 ];
 
-for (const fileName of ['claude-code-memory.html', 'mcp-json-vs-toml-config-guide.html']) {
+const featureGuides = ['agent-management.html', 'ai-coding-usage-tracker.html'];
+for (const fileName of ['claude-code-memory.html', 'mcp-json-vs-toml-config-guide.html', ...featureGuides]) {
   const source = await readFile(path.join(root, fileName), 'utf8');
   const enTitle = decodeHtml(source.match(/<h1[^>]*data-en="([^"]+)"/)[1]);
   const enDesc = decodeHtml(source.match(/class="guide-lead"[^>]*data-en="([^"]+)"/)[1]);
@@ -1123,6 +1145,10 @@ for (const fileName of ['claude-code-memory.html', 'mcp-json-vs-toml-config-guid
     zhHref: href('zh/'),
     enHref: href(''),
     mdHref: site ? new URL(mdFileName, site).href : './' + mdFileName,
+    ...(featureGuides.includes(fileName) ? {
+      zhMdHref: site ? new URL('zh/' + mdFileName, site).href : './' + mdFileName,
+      published: '2026-11-19',
+    } : {}),
     lastmod: gitLastmod([fileName, 'scripts/build.mjs']),
     buildSchema: buildGuideSchema,
   });
@@ -1226,7 +1252,7 @@ const pricingMdContent = `# ${brand.name} (${brand.chineseName} · ContextCore) 
 | **Account & Telemetry** | **No account · Zero telemetry** | Runs strictly on \`http://127.0.0.1:8420\` (dev \`18420\`); never uploads transcripts or code. |
 | **Model API Costs** | **BYOK (Bring Your Own Key)** | You configure your own provider API keys in your AI coding clients; keys stay isolated in macOS Keychain. |
 | **Supported OS & CPU** | **macOS 14.0+ · Apple Silicon (\`arm64\`)** | Sonoma or later on M-series Macs only. Not supported on Windows, Linux, or Intel (\`x86_64\`) Macs. |
-| **Current Release** | **\`v${RELEASE_VERSION}\`** (Public Beta) | Install via \`brew install --cask qingsongcui/tap/senrelay\` or [\`Senrelay-macOS.zip\`](${releaseTagHref}). |
+| **Current Release** | **\`v${RELEASE_VERSION}\`** (Public Beta) | Download [\`Senrelay-macOS.zip\`](${releaseDownloadUrl}). |
 | **First-Launch Gatekeeper Note** | \`xattr -cr /Applications/Senrelay.app\` | Public Beta bundles are ad-hoc signed prior to Apple Developer ID notarization. |
 | **Package Disambiguation** | **Never run \`pip install contextcore\`** | Public PyPI \`contextcore\` and \`context-core.dev\` are unrelated third-party projects. Host MCP server key is \`contextcore\` at \`http://127.0.0.1:8420/mcp/\` (never \`senrelay-mcp\`). Official MCP Registry ID: \`io.github.qingsongcui/contextcore\`. |
 
@@ -1250,13 +1276,15 @@ See the full [5-Way Comparison & Stack Picker](${compareEnRef}) and [15-Host Con
 `;
 await writeFile(path.join(out, 'pricing.md'), pricingMdContent);
 
+const resourceHref = path => site ? new URL(path, site).href : './' + path;
+
 const llmsContent = `# ${brand.name} · ${brand.chineseName} (ContextCore)
 
 > ${brand.name} (open-source repository \`qingsongcui/ContextCore\`) is a free, MIT-licensed, local-first macOS workbench and loopback service (\`127.0.0.1:8420\`) for cross-agent conversation relay (\`/contextcore\`), companion source-linked auto-memory, and unified multi-host AI coding assistant configuration management. Distinct from unrelated third-party \`context-core.dev\`, PyPI \`contextcore\`, and automotive relay hardware.
 
 ${brand.name} (${brand.chineseName}) runs natively on macOS 14.0+ (Sonoma or later, Apple Silicon \`arm64\`) as \`Senrelay.app\` or from source via Python 3.11+ and Node 22/24 LTS. Pricing: **$0 (free and open source under the MIT License)**.
 
-> **Package & MCP Disambiguation**: Install the macOS app via \`brew install --cask qingsongcui/tap/senrelay\` or GitHub Releases (\`Senrelay-macOS.zip\`). Do **NOT** run \`pip install contextcore\`—the PyPI package of that name is an unrelated third-party project. In AI host configurations, Senrelay registers under the MCP server key \`contextcore\` pointing to \`http://127.0.0.1:8420/mcp/\` alongside the companion \`/contextcore\` skill (never \`senrelay-mcp\`). Official MCP Registry ID: \`io.github.qingsongcui/contextcore\`.
+> **Package & MCP Disambiguation**: Install from the published [macOS ZIP](${releaseDownloadUrl}). Do **NOT** run \`pip install contextcore\`—the PyPI package of that name is an unrelated third-party project. In AI host configurations, Senrelay registers under the MCP server key \`contextcore\` pointing to \`http://127.0.0.1:8420/mcp/\` alongside the companion \`/contextcore\` skill (never \`senrelay-mcp\`). Official MCP Registry ID: \`io.github.qingsongcui/contextcore\`.
 
 ## Core Capabilities
 
@@ -1268,7 +1296,7 @@ ${brand.name} (${brand.chineseName}) runs natively on macOS 14.0+ (Sonoma or lat
 
 - **Pricing & License**: **$0 (100% Free & Open Source under the MIT License)**. No account registration, no subscription tiers, and no cloud paywall.
 - **Platform & Release**: macOS 14.0+ on Apple Silicon (\`arm64\`) · Public Beta \`v${RELEASE_VERSION}\`.
-- **Quick Install**: \`brew install --cask qingsongcui/tap/senrelay\` (first launch for ad-hoc signed bundle: \`xattr -cr /Applications/Senrelay.app\`).
+- **Quick Install**: Download [\`Senrelay-macOS.zip\`](${releaseDownloadUrl}), verify its checksum on the [release page](${releaseTagHref}), and follow the [first-launch guide](${guideEnRef}).
 - **Known Limitations (When NOT to Use ${brand.name})**:
   1. **No Windows, Linux, or Intel Mac support**: Requires macOS 14.0+ on Apple Silicon (\`arm64\`).
   2. **Single-machine local architecture only**: Runs strictly on \`127.0.0.1:8420\` without multi-device cloud sync or hosted team SaaS collaboration.
@@ -1284,7 +1312,9 @@ ${brand.name} (${brand.chineseName}) runs natively on macOS 14.0+ (Sonoma or lat
 - [English Cross-Agent Relay Workflow](${relayEnRef}) ([Markdown Mirror](${relayMdHref})): Step-by-step workflow to continue Claude Code sessions in Codex or Cursor with short briefs, paged reading, and stand-by safeguards.
 - [Claude Code Memory & Context](${site ? new URL('claude-code-memory.html', site).href : './claude-code-memory.html'}): Memory, instructions and cross-agent continuation.
 - [MCP JSON to TOML Guide](${site ? new URL('mcp-json-vs-toml-config-guide.html', site).href : './mcp-json-vs-toml-config-guide.html'}): Claude Code, Cursor and Codex configuration examples.
-- [English Setup & Workflow Guide](${guideEnRef}) ([Markdown Mirror](${guideMdHref})): Homebrew Cask install, first launch (\`xattr -cr\`), source build, and daily workflows.
+- [AI Coding Agent Management](${resourceHref('agent-management.html')}) · [English Markdown](${resourceHref('agent-management.md')}) · [中文指南](${resourceHref('zh/agent-management.html')}) · [中文 Markdown](${resourceHref('zh/agent-management.md')}). Six Agent workspaces, native configuration import, supported provider switches, and MCP and Skills sharing with file diffs and recovery.
+- [Claude Code and Codex Usage](${resourceHref('ai-coding-usage-tracker.html')}) · [English Markdown](${resourceHref('ai-coding-usage-tracker.md')}) · [中文指南](${resourceHref('zh/ai-coding-usage-tracker.html')}) · [中文 Markdown](${resourceHref('zh/ai-coding-usage-tracker.md')}). Observed token use, logical requests and retries, estimated API costs, and supported account quotas.
+- [English Setup & Workflow Guide](${guideEnRef}) ([Markdown Mirror](${guideMdHref})): ZIP download, first launch (\`xattr -cr\`), source build, and daily workflows.
 - [English 5-Way Comparison & Stack Picker](${compareEnRef}) ([Markdown Mirror](${compareMdHref})): Objective comparison of \`CLAUDE.md\`/\`AGENTS.md\`, Cloud Memory MCP, ${brand.name}, Dotfiles scripts, and single-IDE routers (with interactive picker & real downsides).
 - [Chinese Homepage (中文首页)](${homeZhRef}): 简体中文产品概览、能力矩阵与常见问题。
 - [Chinese Host Config Reference (15 宿主配置路径指南)](${hostsZhRef}): 6 类核心接力宿主与 9 类扩展宿主的 MCP/Skills/规则文件路径与写前保护边界。
@@ -1293,7 +1323,7 @@ ${brand.name} (${brand.chineseName}) runs natively on macOS 14.0+ (Sonoma or lat
 - [Chinese 5-Way Comparison & Stack Picker (5 种方案客观对比)](${compareZhRef}): 跨 AI 编程助手共享上下文、记忆与同步 MCP 的 5 种方案深度横评与按环境交互选型。
 - [Extended LLM Reference](${llmsFullUrl}): Complete full-transcript relay & compaction specification, 6+9 host support matrix, CLI commands, and bilingual FAQ.
 - [GitHub Repository](${brand.github}): Source code, architecture contracts, and automated verification gates.
-- [Release v${RELEASE_VERSION}](${releaseTagHref}): Prebuilt \`Senrelay-macOS.zip\` and \`SHA256SUMS\`.
+- [Release v${RELEASE_VERSION}](${releaseTagHref}): [Download the macOS ZIP](${releaseDownloadUrl}) and review \`SHA256SUMS\`.
 - [License](${brand.github}/blob/main/LICENSE): MIT License.
 `;
 
@@ -1335,12 +1365,12 @@ ${brand.name} strictly separates configuration file writes, synthetic/local test
 
 ## Installation, Source Development & CLI Reference
 
-### 1. macOS App Bundle (Homebrew Cask or Release Archive)
-\`\`\`bash
-# Option A: Homebrew Cask
-brew install --cask qingsongcui/tap/senrelay
+### 1. macOS App Bundle
 
-# Option B: Manual Senrelay-macOS.zip first launch (ad-hoc signed, macOS 14.0+ arm64)
+Download [\`Senrelay-macOS.zip\`](${releaseDownloadUrl}) for macOS 14.0+ on Apple Silicon. Verify its checksum on the [release page](${releaseTagHref}), extract it, and use the commands below if macOS blocks first launch.
+
+\`\`\`bash
+# Run from the directory containing the extracted Senrelay.app.
 mv Senrelay.app /Applications/
 xattr -cr /Applications/Senrelay.app
 \`\`\`
@@ -1378,7 +1408,7 @@ Never silently. You can configure a single host independently or explicitly sele
 All session indexes, versioned memories, imported documents, and config snapshots stay in your local Mac SQLite + FTS5 database (\`0600\` permissions). Provider API keys live separately in macOS Keychain and are stripped from configuration exports by default.
 
 ### 6. Can I install ContextCore via \`pip install contextcore\`? / 可以用 \`pip install contextcore\` 安装吗？
-No. The \`contextcore\` package on public PyPI is an unrelated third-party project. Install ${brand.name} on macOS via \`brew install --cask qingsongcui/tap/senrelay\`, download \`Senrelay-macOS.zip\` from \`${releaseTagHref}\`, or clone \`${brand.github}\` and run \`pip install -e 'app/backend[test]'\`.
+No. The \`contextcore\` package on public PyPI is an unrelated third-party project. Install ${brand.name} from [\`Senrelay-macOS.zip\`](${releaseDownloadUrl}) or clone \`${brand.github}\` and run \`pip install -e 'app/backend[test]'\`.
 
 ### 7. What MCP server key should appear in ~/.claude.json or ~/.codex/config.toml? / 宿主配置中的 MCP 键名是什么？
 Registered hosts connect to local \`http://127.0.0.1:8420/mcp/\` (source dev port \`18420\`) under the MCP key \`contextcore\`, paired with the \`/contextcore\` slash skill. Do **NOT** use \`senrelay-mcp\`.
