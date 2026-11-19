@@ -2,6 +2,12 @@
 
 All notable changes to ContextCore will be documented in this file.
 
+## [1.0.0-beta.4] - 2026-11-19
+
+- Organize Agent management around six assistants and combine entries that use the same native configuration.
+- Manage provider switching, native configuration imports, shared resources, backups, and recovery from the Senrelay workbench.
+- Add request-level usage, retry details, pricing, CSV export, and supported account quotas.
+
 ## [1.0.0-beta.3] - 2026-11-17
 
 - Harden execution gates for stale and discussion-only handoffs, memory corrections, and mirrored tasks.
