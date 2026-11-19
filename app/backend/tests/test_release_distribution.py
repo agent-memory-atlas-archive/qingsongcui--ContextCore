@@ -21,6 +21,26 @@ def readiness(monkeypatch):
     return check_release_readiness
 
 
+def test_readiness_keeps_the_first_accepted_probe_during_cold_start(tmp_path, readiness):
+    port = readiness.find_free_port()
+    responder = """
+import sys, time
+from http.server import BaseHTTPRequestHandler, HTTPServer
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        time.sleep(1.4)
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b'ready')
+with HTTPServer(('127.0.0.1', int(sys.argv[1])), Handler) as server:
+    server.handle_request()
+"""
+    cmd = [sys.executable, "-I", "-c", responder, str(port)]
+    with readiness.probe_service(cmd, cwd=tmp_path, env={"HOME": str(tmp_path), "PATH": os.defpath}) as process:
+        with readiness.wait_for_http("127.0.0.1", port, process=process) as response:
+            assert response.status == 200 and response.read() == b"ready"
+
+
 def test_cli_serve_explicit_missing_frontend_fails(tmp_path: Path) -> None:
     """Providing an explicit --frontend-dir that does not exist must fail immediately."""
     parser = cli.create_parser()

@@ -55,18 +55,20 @@ def find_free_port() -> int:
 def wait_for_http(host: str, port: int, path: str = "/health", *, process: subprocess.Popen,
                   timeout: float = 30.0) -> http.client.HTTPResponse:
     deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
+    while (remaining := deadline - time.monotonic()) > 0:
         if process.poll() is not None:
             _, error = process.communicate()
             if isinstance(error, bytes):
                 error = error.decode("utf-8", errors="replace")
             raise RuntimeError(f"Probe service exited with code {process.returncode}: {(error or '').strip()[-2000:]}")
+        # The CLI binds its socket before application startup. Once connected,
+        # wait for this request instead of filling the queue with abandoned probes.
+        conn = http.client.HTTPConnection(host, port, timeout=remaining)
         try:
-            conn = http.client.HTTPConnection(host, port, timeout=1.0)
             conn.request("GET", path)
-            resp = conn.getresponse()
-            return resp
+            return conn.getresponse()
         except (OSError, http.client.HTTPException):
+            conn.close()
             time.sleep(0.1)
     raise TimeoutError(f"Server at {host}:{port} did not respond within {timeout}s")
 
