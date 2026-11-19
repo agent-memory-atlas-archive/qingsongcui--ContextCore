@@ -393,10 +393,8 @@ def test_one_click_connect_recovers_owned_token_and_refreshes_skill_asset(tmp_pa
     assert body2["warning"] is None
     assert "discover_relay_conversations" in skill_path.read_text(encoding="utf-8")
 
-    # Sync local environment: should also refresh the stale contextcore-handoff asset in management_entities
-    mgr.sync_local_environment()
-    refreshed_asset = mgr.get("asset", stale_asset["id"])
-    assert "discover_relay_conversations" in refreshed_asset["files"]["SKILL.md"]
+    # Reconnecting the running integration never silently edits saved definitions.
+    assert mgr.get("asset", stale_asset["id"])["files"]["SKILL.md"] == old_skill.decode("utf-8")
 
 
 def test_discover_relay_conversations_scopes_to_project_and_cleans_titles(tmp_path, monkeypatch):

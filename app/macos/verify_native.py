@@ -64,6 +64,8 @@ def assert_common_ui(receipt: dict, language: str) -> None:
     assert receipt['language'] == receipt['native_language'] == language
     assert receipt['native_about_title'] == ('关于 Senrelay' if language == 'zh' else 'About Senrelay')
     assert ('编辑' if language == 'zh' else 'Edit') in receipt['native_menu_titles']
+    assert ('前往' if language == 'zh' else 'Go') in receipt['native_menu_titles']
+    assert ('Go' if language == 'zh' else '前往') in receipt['live_language_sync']['toggled_menu_titles']
     assert ('窗口' if language == 'zh' else 'Window') in receipt['native_menu_titles']
     assert receipt['themeSwitchOk'] is True
     assert receipt['live_language_sync']['ok'] is True

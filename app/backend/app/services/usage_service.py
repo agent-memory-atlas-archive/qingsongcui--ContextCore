@@ -8,7 +8,7 @@ from array import array
 from collections import OrderedDict
 from copy import deepcopy
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -39,11 +39,14 @@ def ensure_schema(conn=None):
     CREATE INDEX IF NOT EXISTS usage_v2_attempt_page ON usage_v2_attempts(started_at DESC, id DESC);
     CREATE INDEX IF NOT EXISTS usage_v2_attempt_logical ON usage_v2_attempts(logical_request_id, started_at DESC, id DESC);
     CREATE INDEX IF NOT EXISTS usage_v2_attempt_host_page ON usage_v2_attempts(host_id, started_at DESC, id DESC);
+    CREATE INDEX IF NOT EXISTS usage_v2_route_outcome_time ON usage_v2_attempts(host_id,json_extract(data,'$.route_version'),json_extract(data,'$.gateway_outcome'),COALESCE(json_extract(data,'$.ended_at'),started_at) DESC,id DESC) WHERE host_id IS NOT NULL AND json_extract(data,'$.route_version') IS NOT NULL;
     CREATE INDEX IF NOT EXISTS usage_v2_attempt_provider_page ON usage_v2_attempts(provider_id, started_at DESC, id DESC);
     CREATE INDEX IF NOT EXISTS usage_v2_attempt_model_page ON usage_v2_attempts(model, started_at DESC, id DESC);
     CREATE INDEX IF NOT EXISTS usage_v2_attempt_project_page ON usage_v2_attempts(project_id, started_at DESC, id DESC);
     CREATE INDEX IF NOT EXISTS usage_v2_attempt_account_page ON usage_v2_attempts(account_id, started_at DESC, id DESC);
     CREATE INDEX IF NOT EXISTS usage_v2_attempt_status_page ON usage_v2_attempts(status, started_at DESC, id DESC);
+    CREATE INDEX IF NOT EXISTS usage_v2_provider_snapshot_name ON usage_v2_attempts(provider_id, started_at DESC,id DESC) WHERE json_type(data,'$.provider_name')='text';
+    CREATE INDEX IF NOT EXISTS usage_v2_account_snapshot_name ON usage_v2_attempts(account_id, started_at DESC,id DESC) WHERE json_type(data,'$.account_name')='text';
     CREATE INDEX IF NOT EXISTS usage_v2_upstream ON usage_v2_attempts(provider_id, upstream_request_id);
     CREATE TABLE IF NOT EXISTS usage_v2_observations (
       origin TEXT NOT NULL, observation_id TEXT NOT NULL, attempt_id TEXT NOT NULL,
@@ -57,6 +60,7 @@ def ensure_schema(conn=None):
       id TEXT PRIMARY KEY, provider_id TEXT NOT NULL, model TEXT NOT NULL,
       effective_from TEXT NOT NULL, effective_to TEXT, currency TEXT NOT NULL, data TEXT NOT NULL
     );
+    CREATE INDEX IF NOT EXISTS usage_v2_price_model_time ON usage_v2_prices(provider_id, model, effective_from);
     CREATE TABLE IF NOT EXISTS usage_v2_cursors (
       source_id TEXT PRIMARY KEY, sequence INTEGER NOT NULL, counters TEXT NOT NULL
     );
@@ -81,7 +85,7 @@ def _time(value: str | None, default=None, *, field: str | None = None):
         if parsed.tzinfo is None:
             raise ValueError()
         return parsed.astimezone(timezone.utc).isoformat()
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, OverflowError):
         prefix = f"{field}: " if field else ""
         raise HTTPException(422, f"{prefix}Timestamps must be ISO8601 with timezone")
 
@@ -144,7 +148,7 @@ def _decimal(value, *, field: str | None = None):
         return None
     try:
         result = Decimal(str(value))
-        if not result.is_finite() or result < 0:
+        if not result.is_finite() or result < 0 or abs(result.as_tuple().exponent) > 30 or len(result.as_tuple().digits) > 30:
             raise ValueError()
         return format(result, "f")
     except (ValueError, InvalidOperation):
@@ -163,10 +167,10 @@ def add_price(data):
     if end and end <= start:
         raise HTTPException(422, "Price end must follow start")
     currency = str(data.get("currency", "USD")).upper()
-    if len(currency) != 3 or not currency.isalpha():
+    if len(currency) != 3 or not currency.isascii() or not currency.isalpha():
         raise HTTPException(422, "Currency must be a three-letter code")
     result = {"id": new_id("price"), "provider_id": data["provider_id"], "model": data["model"],
-              "effective_from": start, "effective_to": end, "currency": currency}
+              "effective_from": start, "effective_to": end, "currency": currency, "source": "manual"}
     for key in ("input_per_million", "output_per_million", "cache_read_per_million", "cache_write_per_million"):
         result[key] = _decimal(data.get(key), field=key)
     with db() as conn:
@@ -182,9 +186,38 @@ def list_prices():
         return [decode(r["data"], {}) for r in conn.execute("SELECT data FROM usage_v2_prices ORDER BY effective_from DESC")]
 
 
-def _price(conn, provider, model, at):
-    row = conn.execute("SELECT data FROM usage_v2_prices WHERE provider_id=? AND model=? AND effective_from<=? AND (effective_to IS NULL OR effective_to>?) ORDER BY effective_from DESC, rowid DESC LIMIT 1", (provider, model, at, at)).fetchone()
+def _price(conn, provider, model, at, *, catalog_revision=None):
+    query = ("SELECT data FROM usage_v2_prices WHERE provider_id=? AND model=? AND effective_from<=? "
+             "AND (effective_to IS NULL OR effective_to>?)")
+    params = [provider, model, at, at]
+    if catalog_revision is not None:
+        query += " AND rowid<=?"
+        params.append(catalog_revision)
+    row = conn.execute(query + " ORDER BY effective_from DESC,rowid DESC LIMIT 1", params).fetchone()
     return decode(row["data"], {}) if row else None
+
+
+def _receipt_price(conn, merged, prior, observation):
+    model = merged.get("billing_model") or merged.get("model")
+    outcome = observation.get("gateway_outcome")
+    revision = prior.get("price_catalog_revision")
+    if outcome == "running" and revision is None:
+        # An upstream alias may resolve to a different billing model only once
+        # the reply arrives. Preserve the catalog as it stood at dispatch.
+        revision = conn.execute("SELECT COALESCE(MAX(rowid),0) FROM usage_v2_prices").fetchone()[0]
+    if revision is not None:
+        merged["price_catalog_revision"] = revision
+    if not prior:
+        return _price(conn, merged.get("provider_id"), model, merged["started_at"], catalog_revision=revision)
+    if outcome and outcome != "running" and prior.get("gateway_outcome") == "running":
+        actual = observation.get("actual_model")
+        if actual and actual == model and actual != observation.get("model"):
+            if revision is None:
+                return None  # pre-upgrade pending attempts lack a dispatch catalog boundary
+            return _price(conn, merged.get("provider_id"), actual, merged["started_at"], catalog_revision=revision)
+    # Ordinary supplemental metadata cannot introduce a new price, including
+    # where the original price was unknown.
+    return prior.get("cost", {}).get("price_snapshot")
 
 
 def _cost(usage, price):
@@ -234,8 +267,39 @@ def _metrics(data):
             "speed_note": None if speed is not None else "requires token count and at least two timed content chunks"}
 
 
+ROUTE_SNAPSHOT = ("connection_mode", "route_version", "attempt_number", "provider_name", "credential_source", "account_id", "account_name")
+
+
+def _observed_performance(usage, records):
+    # Never subtract timestamps from different observers. A user-imported
+    # proxy receipt is reported timing; only this gateway owns its clock.
+    clocks = {}
+    for record in records:
+        measured = record["origin"] == "proxy" and bool(record.get("gateway_outcome"))
+        clock = (record["origin"], measured)
+        if clock not in clocks:
+            clocks[clock] = {"origin": record["origin"], "usage": usage}
+        for field in ("started_at", "first_content_at", "last_content_at", "ended_at", "content_chunks"):
+            if record.get(field) is not None:
+                clocks[clock][field] = record[field]
+    result = {key: None for key in METRICS}
+    methods = {}
+    for (_, measured), clock in sorted(clocks.items(), key=lambda item: item[0][1]):
+        sample = _metrics(clock)
+        for key in METRICS:
+            if sample[key] is not None:
+                result[key] = sample[key]
+                methods[key] = "stream" if measured else "reported"
+    sources = set(methods.values())
+    return {**result, "measurement_by_metric": methods,
+            "measurement": next(iter(sources)) if len(sources) == 1 else "mixed" if sources else None,
+            "speed_note": "requires token count and at least two timed content chunks"
+            if result["output_tokens_per_second"] is None else None}
+
+
 def _safe_observation(item):
     allowed = {"origin", "observation_id", "logical_request_id", "attempt_id", "provider_id", "model", "requested_model", "actual_model", "billing_model", "host_id", "project_id", "account_id", "upstream_request_id", "started_at", "ended_at", "first_content_at", "last_content_at", "content_chunks", "status", "protocol", "raw_usage", "input_includes_cache", "error_code", "cumulative", "source_id", "sequence", "coverage", "confidence"}
+    allowed.update(ROUTE_SNAPSHOT)
     if set(item) - allowed:
         raise HTTPException(422, "Only usage metadata is accepted; request/response bodies and credentials are not ledger fields")
     origin = item.get("origin", "native_log")
@@ -247,6 +311,12 @@ def _safe_observation(item):
     if not item.get("started_at"):
         raise HTTPException(422, "A stable started_at timestamp is required for replay-safe ingestion")
     result = {k: v for k, v in item.items() if k in allowed}
+    for field in ("route_version", "attempt_number"):
+        if field in result and (type(result[field]) is not int or not 1 <= result[field] <= 2**63 - 1):
+            raise HTTPException(422, f"{field} must be a positive integer")
+    for field, choices in (("connection_mode", ("routing", "aggregation")), ("credential_source", ("account", "provider"))):
+        if field in result and result[field] not in choices:
+            raise HTTPException(422, f"Unsupported {field}")
     result.update(origin=origin, status=status, started_at=_time(item["started_at"], field="started_at"))
     for key in ("ended_at", "first_content_at", "last_content_at"):
         result[key] = _time(item.get(key), field=key)
@@ -256,17 +326,58 @@ def _safe_observation(item):
     result.pop("raw_usage", None)
     if result.get("error_code") and (len(str(result["error_code"])) > 64 or not all(c.isalnum() or c in "_.-" for c in str(result["error_code"]))):
         raise HTTPException(422, "error_code must be a short metadata identifier")
-    for key in ("observation_id", "logical_request_id", "attempt_id", "provider_id", "model", "requested_model", "actual_model", "billing_model", "host_id", "project_id", "account_id", "upstream_request_id", "source_id"):
+    for key in ("observation_id", "logical_request_id", "attempt_id", "provider_id", "provider_name", "model", "requested_model", "actual_model", "billing_model", "host_id", "project_id", "account_id", "account_name", "upstream_request_id", "source_id"):
         value = result.get(key)
         if value is not None and (not isinstance(value, str) or len(value) > 256 or any(ord(c) < 32 for c in value)):
             raise HTTPException(422, "Identifiers must be short strings without control characters")
     return result
 
 
-def ingest(observations):
+def _cumulative_delta(current, previous):
+    # Keep the last known value of each counter across partial snapshots. The
+    # emitted sample still reports null for every field its source omitted.
+    fields = (*COUNTERS, "uncached_input_tokens")
+    missing = set(previous.get("missing", ())) | {k for k in fields if previous.get(k) is None}
+    primary_input = "input_tokens" if current.get("input_includes_cache") else "uncached_input_tokens"
+    reset = any(current.get(k) is not None and previous.get(k) is not None and current[k] < previous[k]
+                for k in (primary_input, "output_tokens"))
+    delta, cursor = current.copy(), current.copy()
+    cursor["missing"] = [k for k in fields if current.get(k) is None]
+    for key in fields:
+        value, prior = current.get(key), previous.get(key)
+        if value is None:
+            cursor[key] = None if reset else prior
+        elif prior is not None and (not reset or key not in missing):
+            delta[key] = value - prior if value >= prior else value
+    if current.get("input_includes_cache"):
+        # A cache delta spanning an observation gap cannot be assigned to the
+        # last input interval. Preserve the fresh baseline for the next sample.
+        caches = ("cache_read_tokens", "cache_write_tokens")
+        if previous and not reset:
+            for key in caches:
+                if key in missing or "input_tokens" in missing:
+                    delta[key] = None
+        cache = sum(delta[k] or 0 for k in caches)
+        input_count = delta["input_tokens"]
+        if input_count is not None and input_count < cache:
+            for key in caches:
+                delta[key] = None
+        delta["uncached_input_tokens"] = (input_count - cache if input_count is not None
+                                           and any(delta[k] is not None for k in caches) else None)
+    elif delta["uncached_input_tokens"] is not None:
+        # Anthropic reports base input and cache as disjoint counters. Missing
+        # cache telemetry must not look like a reset of the running input total.
+        delta["input_tokens"] = delta["uncached_input_tokens"] + (delta["cache_read_tokens"] or 0) + (delta["cache_write_tokens"] or 0)
+    return delta, cursor
+
+
+def ingest(observations, *, local_gateway=False):
     if not isinstance(observations, list) or len(observations) > 1000:
         raise HTTPException(422, "Supply at most 1000 explicit usage observations")
     cleaned = [_safe_observation(item) for item in observations]
+    if local_gateway:
+        for data in cleaned:
+            data["gateway_outcome"] = data["status"]
     accepted, duplicates, results = 0, 0, []
     with db() as conn:
         ensure_schema(conn)
@@ -289,21 +400,39 @@ def ingest(observations):
                 if cursor and seq <= cursor["sequence"]:
                     raise HTTPException(409, "Cumulative sequence must advance; replay uses the same observation_id")
                 prior = decode(cursor["counters"], {}) if cursor else {}
-                current = data["usage"].copy()
-                for key in (*COUNTERS, "uncached_input_tokens"):
-                    value = current.get(key)
-                    prev = prior.get(key)
-                    if value is not None and prev is not None:
-                        data["usage"][key] = value - prev if value >= prev else value
+                data["usage"], current = _cumulative_delta(data["usage"], prior)
                 conn.execute("INSERT INTO usage_v2_cursors VALUES (?,?,?) ON CONFLICT(source_id) DO UPDATE SET sequence=excluded.sequence,counters=excluded.counters", (source, seq, encode(current)))
             aid = data.get("attempt_id")
             alias = conn.execute("SELECT attempt_id FROM usage_v2_attempt_aliases WHERE alias_id=?", (aid,)).fetchone() if aid else None
             if alias:
                 aid = alias["attempt_id"]
             existing = conn.execute("SELECT * FROM usage_v2_attempts WHERE id=?", (aid,)).fetchone() if aid else None
+            if existing:
+                for field in ("account_id", "provider_id", "upstream_request_id"):
+                    if existing[field] and data.get(field) and existing[field] != data[field]:
+                        raise HTTPException(409, "Attempt conflicts with recorded identity")
             correlated = []
+            ambiguous_upstream = False
             if data.get("upstream_request_id") and data.get("provider_id"):
-                correlated = conn.execute("SELECT * FROM usage_v2_attempts WHERE provider_id=? AND upstream_request_id=?", (data["provider_id"], data["upstream_request_id"])).fetchall()
+                matches = conn.execute("SELECT * FROM usage_v2_attempts WHERE provider_id=? AND upstream_request_id=?", (data["provider_id"], data["upstream_request_id"])).fetchall()
+                # An upstream ID alone cannot combine two known accounts or two
+                # independently dispatched attempts, even with identical model/ID.
+                for row in matches:
+                    if row["account_id"] and data.get("account_id") and row["account_id"] != data["account_id"]:
+                        continue
+                    if row["id"] != aid and data.get("logical_request_id") and data["logical_request_id"] != row["logical_request_id"]:
+                        prior_identity = conn.execute("SELECT 1 FROM usage_v2_observations WHERE attempt_id=? "
+                                                      "AND json_extract(data,'$.logical_request_id') IS NOT NULL LIMIT 1", (row["id"],)).fetchone()
+                        if prior_identity:
+                            ambiguous_upstream = True
+                            continue
+                    origins = decode(row["data"], {}).get("origins", [])
+                    if data["origin"] == "proxy" and "proxy" in origins and aid and aid != row["id"]:
+                        continue
+                    correlated.append(row)
+                if len(correlated) > 1:
+                    ambiguous_upstream = True
+                    correlated = [row for row in correlated if row["id"] == aid]
             # Late upstream IDs must reconcile a proxy start and a native report in
             # either arrival order. The existing proxy attempt owns the identity.
             if not existing and correlated:
@@ -313,8 +442,16 @@ def ingest(observations):
                 aid = existing["id"]
             aid = aid or new_id("attempt")
             rid = existing["logical_request_id"] if existing else data.get("logical_request_id") or new_id("request")
-            if existing and data.get("logical_request_id") not in (None, rid) and not correlated and not alias:
-                raise HTTPException(409, "Attempt already belongs to a different logical request")
+            prior_rid = rid
+            if existing and data.get("logical_request_id") not in (None, rid):
+                # A late, identified gateway receipt may name the request for
+                # an earlier native-only observation whose group we generated.
+                named = conn.execute("SELECT 1 FROM usage_v2_observations WHERE attempt_id=? "
+                                     "AND json_extract(data,'$.logical_request_id') IS NOT NULL LIMIT 1", (aid,)).fetchone()
+                if not named and data["origin"] == "proxy" and correlated:
+                    rid = data["logical_request_id"]
+                else:
+                    raise HTTPException(409, "Attempt already belongs to a different logical request")
             for other in correlated:
                 if other["id"] == aid:
                     continue
@@ -328,7 +465,7 @@ def ingest(observations):
             records = [decode(r["data"], {}) for r in conn.execute("SELECT data FROM usage_v2_observations WHERE attempt_id=? ORDER BY rowid", (aid,))]
             # Proxy timing wins; source fields with greater coverage supplement it.
             records.sort(key=lambda r: (0 if r["status"] == "running" else 1 if r["status"] in {"unknown", "cancelled"} else 3 if r["origin"] == "proxy" else 2))
-            merged = {"id": aid, "logical_request_id": rid, "usage": normalize_usage({}), "origins": sorted({r["origin"] for r in records}), "observations": len(records), "possible_duplicate": not bool(data.get("upstream_request_id"))}
+            merged = {"id": aid, "logical_request_id": rid, "usage": normalize_usage({}), "origins": sorted({r["origin"] for r in records}), "observations": len(records)}
             for record in records:
                 for key, value in record.items():
                     if key == "usage":
@@ -346,13 +483,31 @@ def ingest(observations):
                         if record.get(key) is not None:
                             merged[key] = record[key]
                 merged["timing_origin"] = "proxy"
+                dispatched = next((r for r in timing_records if r.get("gateway_outcome") and r.get("route_version")), None)
+                if dispatched:
+                    for key in (*ROUTE_SNAPSHOT, "provider_id", "requested_model", "model"):
+                        if key in dispatched:
+                            merged[key] = dispatched[key]
+                        else:
+                            merged.pop(key, None)
+                    if dispatched.get("host_id"):
+                        merged["host_id"] = dispatched["host_id"]
+            if merged.get("cumulative"):
+                merged["unattributed_sample"] = all(r["origin"] == "native_log" and r.get("cumulative") and
+                                                     not any(r.get(k) for k in ("attempt_id", "logical_request_id", "upstream_request_id"))
+                                                     for r in records)
+            merged["possible_duplicate"] = ambiguous_upstream or not (merged.get("provider_id") and merged.get("upstream_request_id"))
             merged["observation_refs"] = [{"origin": r["origin"], "observation_id": r["observation_id"], "status": r["status"]} for r in records]
-            price = decode(existing["data"], {}).get("cost", {}).get("price_snapshot") if existing else None
-            merged["cost"] = _cost(merged["usage"], price or _price(conn, merged.get("provider_id"), merged.get("billing_model") or merged.get("model"), merged["started_at"]))
-            merged["performance"] = _metrics(merged)
+            prior = decode(existing["data"], {}) if existing else {}
+            price = _receipt_price(conn, merged, prior, data)
+            merged["cost"] = _cost(merged["usage"], price)
+            merged["performance"] = _observed_performance(merged["usage"], records)
             merged["usage_complete"] = merged["usage"].get("input_tokens") is not None and merged["usage"].get("output_tokens") is not None
             cols = [aid, rid, merged.get("provider_id"), merged.get("model"), merged.get("host_id"), merged.get("project_id"), merged.get("account_id"), merged.get("upstream_request_id"), merged["started_at"], merged["status"], encode(merged)]
-            conn.execute("INSERT INTO usage_v2_attempts VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET provider_id=excluded.provider_id,model=excluded.model,host_id=excluded.host_id,project_id=excluded.project_id,account_id=excluded.account_id,upstream_request_id=excluded.upstream_request_id,started_at=excluded.started_at,status=excluded.status,data=excluded.data", cols)
+            conn.execute("INSERT INTO usage_v2_attempts VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET logical_request_id=excluded.logical_request_id,provider_id=excluded.provider_id,model=excluded.model,host_id=excluded.host_id,project_id=excluded.project_id,account_id=excluded.account_id,upstream_request_id=excluded.upstream_request_id,started_at=excluded.started_at,status=excluded.status,data=excluded.data", cols)
+            if prior_rid != rid:
+                conn.execute("DELETE FROM usage_v2_requests WHERE id=? AND NOT EXISTS "
+                             "(SELECT 1 FROM usage_v2_attempts WHERE logical_request_id=?)", (prior_rid, prior_rid))
             accepted += 1
             results.append({"attempt_id": aid, "logical_request_id": rid, "status": "accepted"})
         if accepted:
@@ -368,17 +523,76 @@ _CACHE_LOCK = threading.Lock()
 _CACHE_LIMIT = 32
 
 
+DIMENSIONS = ("host_id", "provider_id", "model", "account_id", "project_id")
+METRICS = ("ttft_ms", "end_to_end_ms", "output_tokens_per_second")
+
+
+# Old databases did not mark cumulative-only native samples. Inspect their
+# stored receipt identities lazily rather than migrating all historical JSON.
+UNATTRIBUTED_SAMPLE = """CASE WHEN json_extract(data,'$.cumulative')=1
+    THEN COALESCE(json_extract(data,'$.unattributed_sample'),
+        json_extract(data,'$.origins')='["native_log"]' AND upstream_request_id IS NULL AND NOT EXISTS (
+            SELECT 1 FROM usage_v2_observations obs WHERE obs.attempt_id=usage_v2_attempts.id AND
+            COALESCE(json_extract(obs.data,'$.logical_request_id'),json_extract(obs.data,'$.attempt_id'),
+                     json_extract(obs.data,'$.upstream_request_id')) IS NOT NULL)) ELSE 0 END"""
+
+
+def dimension_sql(key):
+    if key == "status":
+        return f"CASE WHEN {UNATTRIBUTED_SAMPLE} THEN 'unknown' ELSE status END"
+    if key == "model":
+        return "COALESCE(NULLIF(json_extract(data,'$.actual_model'),''),model)"
+    return key
+
+
+# Ordering is shared by final-outcome filters, logical rows and drilldown.
+# Native logs without dispatch ordinals use timestamp, then insertion order.
+ATTEMPT_ORDER = "json_extract(data,'$.attempt_number'),started_at,rowid"
+FINAL_ATTEMPT_ORDER = "json_extract(data,'$.attempt_number') DESC,started_at DESC,rowid DESC"
+
+
 def _where(filters=None):
     filters = filters or {}
     where, params = [], []
-    for key in ("host_id", "provider_id", "model", "project_id", "account_id", "status", "logical_request_id"):
+    for key in (*DIMENSIONS, "status", "logical_request_id"):
         if filters.get(key) is not None:
-            where.append(f"{key}=?")
+            column = dimension_sql(key) if "scope" in filters else key
+            where.append(f"{column}=?")
             params.append(filters[key])
-    for key, sign in (("start", ">="), ("end", "<")):
-        if filters.get(key):
-            where.append(f"started_at{sign}?")
-            params.append(_time(filters[key]))
+    if filters.get("request_status") is not None:
+        if filters["request_status"] not in STATUSES:
+            raise HTTPException(422, "Unknown logical request outcome")
+        where.append(f"(CASE WHEN {UNATTRIBUTED_SAMPLE} THEN 'unknown' ELSE "
+                     "(SELECT last.status FROM usage_v2_attempts last WHERE "
+                     "last.logical_request_id=usage_v2_attempts.logical_request_id ORDER BY "
+                     + FINAL_ATTEMPT_ORDER + " LIMIT 1) END)=?")
+        params.append(filters["request_status"])
+    for key in sorted(set(filters.get("missing") or [])):
+        if key not in DIMENSIONS or filters.get(key) is not None:
+            raise HTTPException(422, "Invalid or contradictory missing dimension")
+        where.append(f"{dimension_sql(key)} IS NULL")
+    start, end = (_time(filters.get(key), field=key) for key in ("start", "end"))
+    if start and end and end <= start:
+        raise HTTPException(422, "End must follow start")
+    if start:
+        where.append("started_at>=?")
+        params.append(start)
+    if end:
+        where.append("started_at<?")
+        params.append(end)
+    if filters.get("origin") is not None:
+        if filters["origin"] not in ORIGINS:
+            raise HTTPException(422, "Unknown observation source")
+        where.append("EXISTS (SELECT 1 FROM json_each(data,'$.origins') WHERE value=?)")
+        params.append(filters["origin"])
+    scope = filters.get("scope", "all")
+    if scope not in {"user", "system", "all"}:
+        raise HTTPException(422, "Unknown usage scope")
+    if scope != "all":
+        # A native receipt may corroborate an internal probe. Its extra source
+        # does not turn that probe into a second, user-initiated call.
+        system = "EXISTS (SELECT 1 FROM json_each(data,'$.origins') WHERE value IN ('provider_check','contextcore_compute'))"
+        where.append(system if scope == "system" else "NOT " + system)
     return (" WHERE " + " AND ".join(where) if where else ""), tuple(params)
 
 
@@ -404,6 +618,12 @@ def _cached(key):
 
 
 def _remember(key, value):
+    # The cache holds interactive views. Broad exports, multi-year ranges and
+    # high-cardinality dimensions still return in full without retaining them.
+    if isinstance(value, list) and len(value) > 2048:
+        return
+    if isinstance(value, dict) and any(isinstance(rows, list) and len(rows) > 2048 for rows in value.values()):
+        return
     with _CACHE_LOCK:
         _AGGREGATES[key] = deepcopy(value)
         _AGGREGATES.move_to_end(key)
@@ -436,6 +656,22 @@ def _coverage_result(attempts, metered, origins):
             "all_host_usage": "unknown", "legacy_usage_meters": "excluded_contextcore_compute_legacy"}
 
 
+def _observe_host(hosts, host_id, at, complete, origins, sample):
+    item = hosts.setdefault(host_id, {"host_id": host_id, "first_observed_at": at,
+                                     "last_observed_at": at, "observed_attempts": 0,
+                                     "metered_attempts": 0, "unattributed_samples": 0, "origins": set()})
+    item["first_observed_at"] = min(item["first_observed_at"], at)
+    item["last_observed_at"] = max(item["last_observed_at"], at)
+    item["observed_attempts"] += not sample
+    item["metered_attempts"] += bool(complete) and not sample
+    item["unattributed_samples"] += bool(sample)
+    item["origins"].update(origins or ())
+
+
+def _coverage_hosts(hosts):
+    return [{**hosts[k], "origins": sorted(hosts[k]["origins"])} for k in sorted(hosts, key=lambda k: k or "")]
+
+
 def coverage(filters=None):
     where, params = _where(filters)
     with db() as conn:
@@ -445,16 +681,18 @@ def coverage(filters=None):
         found = _cached(key)
         if found is not None:
             return found
-        attempts = metered = 0
-        origins = set()
-        # Compact SQLite projection, never loads the full data/observation refs.
-        cursor = conn.execute("SELECT json_extract(data,'$.usage_complete','$.origins') FROM usage_v2_attempts" + where, params)
+        attempts = metered = samples = 0
+        origins, hosts = set(), {}
+        cursor = conn.execute(f"SELECT json_extract(data,'$.usage_complete','$.origins'),host_id,started_at,{UNATTRIBUTED_SAMPLE} FROM usage_v2_attempts" + where, params)
         for row in cursor:
             complete, source_origins = json.loads(row[0])
-            attempts += 1
-            metered += bool(complete)
-            origins.update(source_origins or [])
-        result = _coverage_result(attempts, metered, origins)
+            sample = bool(row[3])
+            attempts += not sample
+            metered += bool(complete) and not sample
+            samples += sample
+            origins.update(source_origins or ())
+            _observe_host(hosts, row[1], row[2], complete, source_origins, sample)
+        result = {**_coverage_result(attempts, metered, origins), "unattributed_samples": samples, "hosts": _coverage_hosts(hosts)}
         _remember(key, result)
         return result
 
@@ -463,73 +701,124 @@ def _distribution(values):
     values = sorted(v for v in values if v is not None)
     if not values:
         return {"samples": 0, "p50": None, "p95": None, "mean": None}
-    return {"samples": len(values), "p50": values[(len(values) - 1) // 2], "p95": values[min(len(values)-1, int((len(values)-1)*.95+.999999))], "mean": sum(values)/len(values)}
+    size = len(values)
+    # Use the same nearest-rank convention for both observed percentiles.
+    return {"samples": size, "p50": values[(size - 1) // 2], "p95": values[(95 * size - 1) // 100],
+            "mean": sum(values) / size}
 
 
-def summary(filters=None, tz="Asia/Shanghai"):
+def _totals():
+    return {"logical_requests": 0, "attempts": 0, "unattributed_samples": 0, "known_tokens": 0, "known_token_attempts": 0,
+            "unknown_usage_count": 0, "unknown_cost_count": 0, "cost_by_currency": {}}
+
+
+def _count_attempt(bucket, new_request, inp, out, amount, currency, *, sample):
+    bucket["logical_requests"] += new_request and not sample
+    bucket["attempts"] += not sample
+    bucket["unattributed_samples"] += bool(sample)
+    bucket["known_tokens"] += (inp or 0) + (out or 0)
+    bucket["known_token_attempts"] += inp is not None or out is not None
+    bucket["unknown_usage_count"] += inp is None or out is None
+    if amount is None or not currency:
+        bucket["unknown_cost_count"] += 1
+    else:
+        costs = bucket["cost_by_currency"]
+        costs[currency] = costs.get(currency, Decimal(0)) + Decimal(amount)
+
+
+def _format_totals(bucket):
+    return {**bucket, "cost_by_currency": {c: format(v, "f") for c, v in bucket["cost_by_currency"].items()}}
+
+
+def _calendar(days, filters, zone):
+    first = (filters or {}).get("start")
+    end = (filters or {}).get("end")
+    start_day = datetime.fromisoformat(_time(first)).astimezone(zone).date() if first else min(days, default=None)
+    # The upper bound is exclusive even when it falls on a DST transition.
+    end_day = (datetime.fromisoformat(_time(end)) - timedelta(microseconds=1)).astimezone(zone).date() if end else max(days, default=None)
+    if start_day is None or end_day is None:
+        return []
+    day_count = (end_day - start_day).days + 1
+    if day_count > 10000:
+        raise HTTPException(422, "Select a shorter range for the daily calendar (maximum 10000 dates)")
+    result = []
+    for i in range(day_count):
+        day = start_day + timedelta(days=i)
+        if day in days:
+            totals = _format_totals(days[day])
+        else:
+            totals = dict.fromkeys(_totals())
+            totals["cost_by_currency"] = {}
+        result.append({**totals, "date": day.isoformat(), "observed": day in days,
+                       "unknown_usage_attempts": totals["unknown_usage_count"]})
+    return result
+
+
+def summary(filters=None, tz="Asia/Shanghai", *, calendar=False):
     try:
         zone = ZoneInfo(tz)
-    except ZoneInfoNotFoundError:
+    except (ZoneInfoNotFoundError, ValueError):
         raise HTTPException(422, "Unknown timezone")
     where, params = _where(filters)
     with db() as conn:
         ensure_schema(conn)
         conn.execute("BEGIN")
         base_key = _cache_key(conn, where, params)
-        key = ("summary", base_key, tz)
+        key = ("summary", base_key, tz, calendar)
         found = _cached(key)
         if found is not None:
             return found
-        costs, days, logical_ids, origins = {}, {}, set(), set()
-        attempts = metered = missing_input = missing_output = unknown_cost = 0
-        known_input = known_output = 0
+        total, days, hosts, origins = _totals(), {}, {}, set()
+        missing_input = missing_output = known_input = known_output = metered = 0
         statuses = {s: 0 for s in sorted(STATUSES)}
-        performance = {k: array("d") for k in ("ttft_ms", "end_to_end_ms", "output_tokens_per_second")}
-        # One scan and one JSON1 parse per attempt, returning only nine scalars
-        # and origins. Large snapshots/observation_refs never enter Python.
-        cursor = conn.execute("""SELECT logical_request_id,started_at,status,
+        performance = {method: {k: array("d") for k in METRICS} for method in ("stream", "reported")}
+        # Stream related attempts together. Each logical request belongs to its
+        # first matching day, while metering follows the date of each attempt.
+        cursor = conn.execute(f"""SELECT logical_request_id,started_at,status,host_id,
             json_extract(data,'$.usage.input_tokens','$.usage.output_tokens',
               '$.cost.amount','$.cost.currency','$.performance.ttft_ms',
               '$.performance.end_to_end_ms','$.performance.output_tokens_per_second',
-              '$.usage_complete','$.origins')
-            FROM usage_v2_attempts""" + where, params)
+              '$.usage_complete','$.origins','$.performance.measurement_by_metric'), {UNATTRIBUTED_SAMPLE}
+            FROM usage_v2_attempts""" + where + " ORDER BY logical_request_id,started_at,id", params)
+        previous_request = None
         for row in cursor:
-            inp, out, amount, currency, ttft, duration, speed, complete, source_origins = json.loads(row[3])
-            attempts += 1
-            logical_ids.add(row[0])
-            metered += bool(complete)
-            origins.update(source_origins or [])
+            inp, out, amount, currency, ttft, duration, speed, complete, sources, methods = json.loads(row[4])
+            sample = bool(row[5])
+            is_first = row[0] != previous_request
+            previous_request = row[0]
+            day = datetime.fromisoformat(row[1]).astimezone(zone).date()
+            if day not in days:
+                days[day] = _totals()
+            for bucket in (total, days[day]):
+                _count_attempt(bucket, is_first, inp, out, amount, currency, sample=sample)
+            metered += bool(complete) and not sample
+            origins.update(sources or ())
+            _observe_host(hosts, row[3], row[1], complete, sources, sample)
             known_input += inp or 0
             known_output += out or 0
             missing_input += inp is None
             missing_output += out is None
-            unknown_cost += amount is None
-            if amount is not None:
-                costs[currency] = costs.get(currency, Decimal(0)) + Decimal(amount)
-            if row[2] in statuses:
+            if not sample and row[2] in statuses:
                 statuses[row[2]] += 1
-            for metric, value in zip(performance, (ttft, duration, speed)):
+            for metric, value in zip(METRICS, (ttft, duration, speed)):
                 if value is not None:
-                    performance[metric].append(value)
-            day = datetime.fromisoformat(row[1]).astimezone(zone).strftime("%Y-%m-%d")
-            item = days.setdefault(day, {"date": day, "attempts": 0, "known_tokens": 0, "unknown_usage_attempts": 0})
-            item["attempts"] += 1
-            item["known_tokens"] += (inp or 0) + (out or 0)
-            item["unknown_usage_attempts"] += not bool(complete)
-        coverage_result = _coverage_result(attempts, metered, origins)
-        result = {"logical_requests": len(logical_ids), "attempts": attempts,
-                  "input_tokens": None if missing_input else known_input,
-                  "output_tokens": None if missing_output else known_output,
-                  "known_tokens": known_input + known_output, "unknown_usage_count": attempts - metered,
-                  "cost_by_currency": {c: format(v, "f") for c, v in costs.items()},
-                  "unknown_cost_count": unknown_cost, "status_counts": statuses,
-                  "performance": {k: _distribution(v) for k, v in performance.items()},
-                  "heatmap": [days[k] for k in sorted(days)], "timezone": tz, "coverage": coverage_result}
+                    # Historical rows predate per-clock evidence and retain reported status.
+                    source = (methods or {}).get(metric, "reported")
+                    performance["stream" if source == "stream" else "reported"][metric].append(value)
+        coverage_result = {**_coverage_result(total["attempts"], metered, origins), "unattributed_samples": total["unattributed_samples"], "hosts": _coverage_hosts(hosts)}
+        observed_days = [{**_format_totals(days[d]), "date": d.isoformat(), "observed": True,
+                          "unknown_usage_attempts": days[d]["unknown_usage_count"]} for d in sorted(days)]
+        result = {**_format_totals(total), "input_tokens": None if missing_input else known_input,
+                  "output_tokens": None if missing_output else known_output, "status_counts": statuses,
+                  "performance": {k: _distribution(performance["stream"][k] + performance["reported"][k]) for k in METRICS},
+                  "performance_by_measurement": {method: {k: _distribution(v) for k, v in metrics.items()}
+                                                 for method, metrics in performance.items()},
+                  "heatmap": _calendar(days, filters, zone) if calendar else observed_days,
+                  "timezone": tz, "percentile_method": "nearest_rank", "coverage": coverage_result}
         _remember(key, result)
-        # The separate endpoint reuses this exact snapshot rather than scanning
-        # the ledger again immediately after summary (and vice versa when warm).
         _remember(("coverage", base_key), coverage_result)
-        _remember(("count", base_key), attempts)
+        _remember(("count", base_key), total["attempts"] + total["unattributed_samples"])
+        _remember(("logical_count", base_key), total["logical_requests"] + total["unattributed_samples"])
         return result
 
 

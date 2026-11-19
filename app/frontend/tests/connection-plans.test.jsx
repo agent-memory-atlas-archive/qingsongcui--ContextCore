@@ -41,6 +41,22 @@ it('requires a target entry when there is more than one surface', async () => {
   expect(api.mutate).not.toHaveBeenCalled();
 });
 
+it('keeps the default desktop usable when the custom Codex CLI root blocks installation and recovery', async () => {
+  await mount({ id: 'codex', label: 'Codex', targetSurface: 'desktop', data: { ...setup.data, surfaces: ['desktop', 'cli'],
+    blocked_surfaces: ['cli'], config_root: { variable: 'CODEX_HOME', path: '/users/testing/codex' }, pending_plans: [{ id: 'earlier' }] } });
+  expect(container.textContent).toContain('/users/testing/codex');
+  const surface = container.querySelector('select');
+  expect(surface.value).toBe('desktop');
+  expect([...surface.options].map(option => option.value)).not.toContain('cli');
+  api.request.mockResolvedValue({ ...plan, status: 'recovery_required' });
+  await click(button('查看待恢复的接入计划'));
+  expect(button('恢复本次改动')).toBeUndefined();
+  api.mutate.mockResolvedValue({ ...plan, surface: 'desktop' });
+  await click(checkbox());
+  await click(button('预览所选改动'));
+  expect(api.mutate).toHaveBeenCalledWith('/api/connections/codex/plans', 'POST', { operation: 'install', capabilities: ['context_tools'], surface: 'desktop' });
+});
+
 it('accepts success only after a verified status readback', async () => {
   await mount(); await click(checkbox()); await click(button('预览所选改动'));
   await click(checkbox());

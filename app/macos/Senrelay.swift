@@ -11,6 +11,14 @@ final class Desktop: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUI
     var actionStack: NSStackView!
     var service: Process?
     var connecting = false
+    private var workspaceReady = false
+    private var pendingDestination: WorkbenchDestination?
+    private var shortcutRevision = 0
+    lazy var shortcuts = WorkbenchShortcuts(
+        text: { [unowned self] in self.text($0, $1) },
+        read: { [unowned self] in self.readMenuJSON($0, completion: $1) },
+        navigate: { [unowned self] in self.openWorkspace($0) }
+    )
     var recoveryStep = 0
     var recoveredFaults: [[String: Any]] = []
     let verificationDirectory: URL? = {
@@ -119,6 +127,7 @@ final class Desktop: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUI
     }
 
     func buildMenus() {
+        shortcuts.rebuild()
         let menu = NSMenu()
         let appItem = NSMenuItem(); menu.addItem(appItem)
         let appMenu = NSMenu(); appItem.submenu = appMenu
@@ -130,6 +139,11 @@ final class Desktop: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUI
         for (title, selector, key) in [(text("撤销", "Undo"), "undo:", "z"), (text("重做", "Redo"), "redo:", "Z"), (text("剪切", "Cut"), "cut:", "x"), (text("复制", "Copy"), "copy:", "c"), (text("粘贴", "Paste"), "paste:", "v"), (text("全选", "Select All"), "selectAll:", "a")] {
             edit.addItem(withTitle: title, action: Selector(selector), keyEquivalent: key)
         }
+        let goItem = NSMenuItem()
+        menu.addItem(goItem)
+        let goMenu = NSMenu(title: text("前往", "Go"))
+        goItem.submenu = goMenu
+        shortcuts.addNavigationKeys(to: goMenu)
         let viewItem = NSMenuItem(); menu.addItem(viewItem)
         let view = NSMenu(title: text("窗口", "Window")); viewItem.submenu = view
         view.addItem(NSMenuItem(title: text("关闭窗口", "Close Window"), action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w"))
@@ -146,7 +160,7 @@ final class Desktop: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUI
         window.title = "Senrelay · 续境"
         window.minSize = NSSize(width: 800, height: 560)
         window.isReleasedWhenClosed = false
-        window.setFrameAutosaveName("SenrelayMainWindow")
+        if verificationDirectory == nil { window.setFrameAutosaveName("SenrelayMainWindow") }
         let config = WKWebViewConfiguration()
         config.websiteDataStore = verificationDirectory == nil ? .default() : .nonPersistent()
         config.userContentController.add(self, name: "senrelayLanguage")
@@ -183,8 +197,30 @@ final class Desktop: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUI
             actionStack.topAnchor.constraint(equalTo: status.bottomAnchor, constant: 20),
             actionStack.centerXAnchor.constraint(equalTo: status.centerXAnchor)
         ])
+        if verificationDirectory == nil { shortcuts.installStatusItem() }
         window.center(); if verificationDirectory == nil { show() }; reconnect()
     }
+    private func readMenuJSON(_ path: String, completion: @escaping (Any?) -> Void) {
+        guard workspaceReady, let url = web.url, internalURL(url) else { completion(nil); return }
+        web.readWorkbenchRecord(path, origin: origin, completion: completion)
+    }
+
+    private func openWorkspace(_ destination: WorkbenchDestination) {
+        if verificationDirectory == nil { show() }
+        shortcutRevision += 1
+        pendingDestination = destination
+        guard workspaceReady, let url = web.url, internalURL(url) else { return }
+        let revision = shortcutRevision
+        web.openWorkbenchDestination(destination, origin: origin) { next, navigated in
+            guard self.shortcutRevision == revision else { return }
+            if navigated { self.pendingDestination = nil }
+            else if self.workspaceReady {
+                self.pendingDestination = nil
+                self.web.load(URLRequest(url: next))
+            }
+        }
+    }
+
     @objc func show() { window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true) }
     @objc func about() {
         let version = Bundle.main.object(forInfoDictionaryKey: "SenrelayReleaseVersion") as? String
@@ -195,6 +231,7 @@ final class Desktop: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUI
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
     @objc func reconnect() {
         guard !connecting else { return }
+        workspaceReady = false
         connecting = true; status.isHidden = false; web.isHidden = true; retry.isHidden = true; upgradeButton.isHidden = true
         status.stringValue = text("正在连接本机服务…", "Connecting to your local service…")
         probe(attempt: 0, mayStart: true)
@@ -299,6 +336,7 @@ final class Desktop: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUI
     }
     @objc func upgradeService() {
         guard !connecting else { return }
+        workspaceReady = false
         connecting = true; status.isHidden = false; web.isHidden = true; retry.isHidden = true; upgradeButton.isHidden = true
         status.stringValue = text("正在更新本机后台服务…", "Updating local background service…")
         let exe = serviceExecutable
@@ -464,6 +502,7 @@ final class Desktop: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUI
         try? handle.close()
     }
     func fail(_ message: String, allowUpgrade: Bool = false) {
+        workspaceReady = false
         connecting = false
         status.stringValue = message
         status.isHidden = false
@@ -531,6 +570,8 @@ final class Desktop: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUI
         return false
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        workspaceReady = webView.url.map(internalURL) ?? false
+        if let destination = pendingDestination { openWorkspace(destination) }
         status.isHidden = true; retry.isHidden = true; upgradeButton.isHidden = true; web.isHidden = false
         guard verificationDirectory != nil else { return }
         if verifyScenario == "normal" && recoveryStep < 3 {
@@ -825,6 +866,14 @@ final class Desktop: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUI
             decisionHandler(action.shouldPerformDownload ? .download : .allow)
         } else { if action.navigationType == .linkActivated { external(url) }; decisionHandler(.cancel) }
     }
+    func webView(_ webView: WKWebView, decidePolicyFor response: WKNavigationResponse, decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
+        if let http = response.response as? HTTPURLResponse, let url = http.url, internalURL(url),
+           http.value(forHTTPHeaderField: "Content-Disposition")?.split(separator: ";").first?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "attachment" {
+            decisionHandler(.download)
+        } else {
+            decisionHandler(.allow)
+        }
+    }
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
         if let url = navigationAction.request.url { if internalURL(url) { webView.load(navigationAction.request) } else { external(url) } }; return nil
     }
@@ -854,8 +903,13 @@ final class Desktop: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUI
         panel.beginSheetModal(for: window) { completionHandler($0 == .OK ? panel.url : nil) }
     }
 }
-let app = NSApplication.shared
-let delegate = Desktop()
-app.delegate = delegate
-app.setActivationPolicy(CommandLine.arguments.contains("--verify-ui") ? .prohibited : .regular)
-app.run()
+@main
+struct SenrelayApp {
+    static func main() {
+        let app = NSApplication.shared
+        let delegate = Desktop()
+        app.delegate = delegate
+        app.setActivationPolicy(CommandLine.arguments.contains("--verify-ui") ? .prohibited : .regular)
+        withExtendedLifetime(delegate) { app.run() }
+    }
+}

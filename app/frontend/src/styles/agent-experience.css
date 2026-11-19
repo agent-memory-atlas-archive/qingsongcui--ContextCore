@@ -231,3 +231,31 @@
   .agent-connection-modes .agent-route-row .inline-checkbox { gap: 8px; white-space: nowrap; }
   @media (max-width: 640px) { .agent-route-choice { grid-template-columns: minmax(0, 1fr); padding: 12px 0 0; } }
 }
+
+@layer mac {
+  .agent-directory-row { display: flex; align-items: center; gap: 8px; padding-inline-end: 14px; border-bottom: var(--hairline) solid var(--line); }
+  .agent-directory-row:last-child { border: 0; }
+  .agent-directory-row > .agent-choice { border: 0; min-width: 0; flex: 1; }
+  .agent-experience > .field { max-width: 420px; margin-bottom: 14px; }
+  .agent-directory-row .button[aria-pressed=true] svg,
+  .agent-provider-pin[aria-pressed=true] svg { fill: currentColor; }
+  .agent-route-observations { display: grid; gap: 8px; margin-block: 12px; }
+  .agent-route-observations > div { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: baseline; font-size: 13px; }
+  .agent-route-observations span, .native-source-path { overflow-wrap: anywhere; color: var(--secondary); }
+  .native-preview .agent-resource-checklist label { display: flex; align-items: start; gap: 10px; }
+  .native-preview .agent-resource-checklist small { display: block; overflow-wrap: anywhere; }
+  .agent-experience .management-card-heading { flex-wrap: wrap; }
+  .agent-experience .agent-provider-pin.button { min-height: 28px; width: 28px; }
+  @media (max-width: 840px) {
+    .agent-experience .page-header { flex-wrap: wrap; gap: 10px; }
+    .agent-experience .cc-top-switcher-bar { gap: 6px; }
+    .agent-experience .cc-toolbar-search > .field { min-width: min(200px, 100%); }
+    .agent-experience .header-actions, .agent-experience .cc-workspace-nav-right,
+    .agent-experience .management-card-primary-actions, .agent-experience .management-card-icon-actions { flex-wrap: wrap; min-width: 0; max-width: 100%; }
+    .agent-experience .cc-inline-popover[open] > .cc-inline-popover-body { position: static; width: 100%; }
+  }
+}
+
+.agent-config-root { display: grid; gap: .25rem; margin: .5rem 0; color: var(--secondary); overflow-wrap: anywhere; }
+.agent-config-root strong { color: var(--ink); }
+.agent-config-root p { margin: 0; }

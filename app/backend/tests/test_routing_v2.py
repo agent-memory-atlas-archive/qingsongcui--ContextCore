@@ -206,6 +206,16 @@ def test_unknown_outcome_never_falls_back(env, exception):
     assert usage_service.requests()["items"][0]["status"] == "unknown"
 
 
+def test_invalid_input_is_recorded_without_opening_the_provider_circuit(env):
+    client, token, monkeypatch = env
+    svc.configure({"circuit_threshold": 1})
+    transport(monkeypatch, lambda _: httpx.Response(400))
+    result = client.post("/api/routing/v1/chat/completions", json={"model": "m"}, headers={"authorization": "Bearer " + token})
+    assert result.status_code == 400
+    assert usage_service.requests()["items"][0]["error_code"] == "upstream_http_400"
+    assert svc.status()["circuits"] == {}
+
+
 def test_model_routes_round_robin_and_same_protocol_required(env):
     client, token, monkeypatch = env
     svc.configure({"model_routes": {"special": ["a", "b"]}, "routing_strategy": "round_robin"})
@@ -320,13 +330,53 @@ def test_conversion_rejects_complex_fields_and_missing_terminal_is_unknown(env):
     assert usage_service.requests()["items"][0]["status"] == "unknown"
 
 
-def test_done_without_final_usage_is_unknown(env):
+def test_done_without_final_usage_keeps_unknown_cost_and_does_not_open_the_circuit(env):
     client, token, monkeypatch = env
+    svc.configure({"circuit_threshold": 1})
     chunks = [b'data: {"choices":[{"delta":{"content":"hello"},"finish_reason":"stop"}]}\n\n', b'data: [DONE]\n\n']
+    transport(monkeypatch, lambda req: httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=Chunks(chunks)))
+    for _ in range(2):
+        response = client.post("/api/routing/v1/chat/completions", json={"model": "m", "stream": True}, headers={"authorization": "Bearer " + token})
+        assert response.status_code == 200 and "[DONE]" in response.text
+    rows = usage_service.requests()["items"]
+    assert len(rows) == 2
+    for row in rows:
+        assert row["status"] == "succeeded" and row["usage"]["output_tokens"] is None
+        assert row["cost"]["amount"] is None and row.get("error_code") is None
+    assert svc.circuit_status()["p"]["state"] == "closed"
+
+
+def test_explicit_stream_failure_is_recorded_without_saving_upstream_message(env):
+    client, token, monkeypatch = env
+    stream = Chunks([b'data: {"type":"error","error":{"message":"upstream message"}}\n\n'])
+    transport(monkeypatch, lambda req: httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=stream))
+    client.post("/api/routing/v1/chat/completions", json={"model": "m", "stream": True}, headers={"authorization": "Bearer " + token})
+    row = usage_service.requests()["items"][0]
+    assert row["status"] == "failed" and row["error_code"] == "upstream_reported_failure"
+    assert "upstream message" not in json.dumps(row)
+
+
+def test_content_then_done_without_terminal_evidence_is_unknown(env):
+    client, token, monkeypatch = env
+    chunks = [b'data: {"choices":[{"delta":{"content":"partial"}}]}\n\n', b'data: [DONE]\n\n']
     transport(monkeypatch, lambda req: httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=Chunks(chunks)))
     client.post("/api/routing/v1/chat/completions", json={"model": "m", "stream": True}, headers={"authorization": "Bearer " + token})
     row = usage_service.requests()["items"][0]
-    assert row["status"] == "unknown" and row["usage"]["output_tokens"] is None
+    assert row["status"] == "unknown" and row["error_code"] == "incomplete_stream"
+
+
+def test_anthropic_initial_output_is_not_a_final_usage_receipt(env):
+    client, token, monkeypatch = env
+    monkeypatch.setattr(svc, "resolve_provider", lambda _: {"base_url": "https://anthropic.example/v1", "protocol": "anthropic", "api_key": "test-key"})
+    chunks = [b'data: {"type":"message_start","message":{"usage":{"input_tokens":8,"output_tokens":0}}}\n\n',
+              b'data: {"type":"content_block_delta","delta":{"text":"answer"}}\n\n',
+              b'data: {"type":"message_stop"}\n\n']
+    transport(monkeypatch, lambda req: httpx.Response(200, headers={"content-type":"text/event-stream"}, stream=Chunks(chunks)))
+    response = client.post("/api/routing/v1/messages", json={"model":"m","stream":True}, headers={"authorization":"Bearer " + token})
+    row = usage_service.requests()["items"][0]
+    assert response.status_code == 200 and "message_stop" in response.text
+    assert row["status"] == "succeeded" and row["usage"]["input_tokens"] == 8
+    assert row["usage"]["output_tokens"] is None and row["cost"]["amount"] is None
 
 
 @pytest.mark.parametrize("field", ["id", "model"])

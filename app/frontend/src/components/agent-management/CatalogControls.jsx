@@ -17,7 +17,7 @@ export function catalogPath(collection, { agentId, kind, providerId, scope = 'as
 
 /** A selection is independent of the currently browsed page. Never clear it
  * because the selected item is outside a search result or a different page. */
-export function CatalogChoice({ collection, label, value, onChange, agentId, providerId, revision, scope = 'assigned', allowNone = true, noneLabel, extraOptions = [], includeUnbound = false, excludeIds = [] }) {
+export function CatalogChoice({ collection, label, value, onChange, agentId, providerId, revision, scope = 'assigned', allowNone = true, noneLabel, extraOptions = [], includeUnbound = false, excludeIds = [], eligible }) {
   const [query, setQuery] = useState('');
   const [offset, setOffset] = useState(0);
   const resource = useResource(catalogPath(collection, { agentId, providerId, scope, query, offset, includeUnbound }), revision);
@@ -25,7 +25,7 @@ export function CatalogChoice({ collection, label, value, onChange, agentId, pro
   const known = [...items, ...extraOptions].find(item => item.id === value);
   const selected = useResource(value && !known ? catalogPath(collection, { scope: 'all', ids: [value], limit: 1 }) : null, revision);
   const selectedItem = known || list(selected.data)[0];
-  const options = [...items, ...extraOptions.filter(item => !items.some(row => row.id === item.id))].filter(item => !excludeIds.includes(item.id));
+  const options = [...items, ...extraOptions.filter(item => !items.some(row => row.id === item.id))].filter(item => !excludeIds.includes(item.id) && (!eligible || eligible(item)));
   if (value && !excludeIds.includes(value) && !options.some(item => item.id === value)) options.unshift(selectedItem || { id: value, name: value });
   const optionText = item => {
     const base = `${item.name || item.id}${item.model_id ? ` · ${item.model_id}` : ''}`;

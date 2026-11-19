@@ -1,0 +1,14 @@
+.quota-panel { min-width: 0; }
+.quota-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr)); gap: 1rem; align-items: start; }
+.quota-card { border: 1px solid var(--line); border-radius: .65rem; padding: 1rem; min-width: 0; overflow-wrap: anywhere; }
+.quota-card header, .quota-window { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: .45rem .8rem; }
+.quota-card h3, .quota-card p { margin: 0 0 .4rem; }
+.quota-card header { margin-bottom: .8rem; }
+.quota-card header span, .quota-card p, .quota-card small, .quota-window span { color: var(--secondary); }
+.quota-card .quota-status, .quota-balance strong { color: var(--ink); }
+.quota-card .quota-official-link { display: inline-flex; gap: .35rem; align-items: center; margin-top: .65rem; }
+.quota-window { margin-block: .7rem; }
+.quota-window div { display: flex; flex-wrap: wrap; align-items: baseline; gap: .45rem; }
+.quota-window progress { flex-basis: 100%; width: 100%; height: .4rem; accent-color: var(--accent); }
+.quota-window small { flex-basis: 100%; }
+.quota-time { font-size: .85rem; }

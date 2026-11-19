@@ -16,6 +16,7 @@ Verifies:
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 import errno
 import hashlib
 import http.client
@@ -51,9 +52,15 @@ def find_free_port() -> int:
         return s.getsockname()[1]
 
 
-def wait_for_http(host: str, port: int, path: str = "/health", timeout: float = 8.0) -> http.client.HTTPResponse:
-    deadline = time.time() + timeout
-    while time.time() < deadline:
+def wait_for_http(host: str, port: int, path: str = "/health", *, process: subprocess.Popen,
+                  timeout: float = 30.0) -> http.client.HTTPResponse:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            _, error = process.communicate()
+            if isinstance(error, bytes):
+                error = error.decode("utf-8", errors="replace")
+            raise RuntimeError(f"Probe service exited with code {process.returncode}: {(error or '').strip()[-2000:]}")
         try:
             conn = http.client.HTTPConnection(host, port, timeout=1.0)
             conn.request("GET", path)
@@ -62,6 +69,23 @@ def wait_for_http(host: str, port: int, path: str = "/health", timeout: float = 
         except (OSError, http.client.HTTPException):
             time.sleep(0.1)
     raise TimeoutError(f"Server at {host}:{port} did not respond within {timeout}s")
+
+
+@contextmanager
+def probe_service(command, *, cwd, env):
+    with subprocess.Popen(command, cwd=cwd, env=env, stdout=subprocess.DEVNULL,
+                          stderr=subprocess.PIPE, text=True) as process:
+        try:
+            yield process
+        finally:
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.communicate(timeout=15)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.communicate()
+                    raise
 
 
 def verify_dependencies(backend_dir: Path) -> None:
@@ -122,10 +146,10 @@ def verify_dependencies(backend_dir: Path) -> None:
 
 def verify_static_discovery_subprocess(backend_dir: Path, app_root: Path) -> None:
     log("Verifying real source CLI static discovery via subprocess HTTP...")
-    env = os.environ.copy()
+    env = {"PATH": os.defpath}
 
     with tempfile.TemporaryDirectory(prefix="cc-static-sub-") as tmp:
-        tmp_path = Path(tmp)
+        tmp_path = Path(tmp).resolve()
         isolated_home = tmp_path / "home"
         isolated_home.mkdir()
         env["HOME"] = str(isolated_home)
@@ -145,7 +169,7 @@ def verify_static_discovery_subprocess(backend_dir: Path, app_root: Path) -> Non
             "--data-dir", str(data_dir),
             "--frontend-dir", str(nonexistent),
         ]
-        res = subprocess.run(cmd_invalid, env=env, capture_output=True, text=True)
+        res = subprocess.run(cmd_invalid, cwd=tmp_path, env=env, capture_output=True, text=True)
         if res.returncode != 1:
             raise AssertionError(f"Expected CLI with missing frontend-dir to exit 1, got {res.returncode}")
         log("  Explicit missing frontend-dir correctly rejected.")
@@ -166,17 +190,13 @@ def verify_static_discovery_subprocess(backend_dir: Path, app_root: Path) -> Non
             "--port", str(port_staging),
             "--data-dir", str(data_dir),
         ]
-        proc = subprocess.Popen(cmd_staging, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        try:
-            resp = wait_for_http("127.0.0.1", port_staging, path="/")
+        with probe_service(cmd_staging, cwd=tmp_path, env=env) as proc:
+            resp = wait_for_http("127.0.0.1", port_staging, path="/", process=proc)
             if resp.status != 200:
                 raise AssertionError(f"Expected root mount to return 200, got {resp.status}")
             body = resp.read().decode("utf-8")
             if marker not in body:
                 raise AssertionError("Expected dist-staging index.html content in response body")
-        finally:
-            proc.terminate()
-            proc.wait(timeout=5)
         log("  Staging frontend mount responds with 200 and expected index.html content.")
 
         # Probe 3: --no-static bypasses static mounting (root returns 404, health returns 200)
@@ -189,17 +209,13 @@ def verify_static_discovery_subprocess(backend_dir: Path, app_root: Path) -> Non
             "--frontend-dir", str(fake_frontend_root),
             "--no-static",
         ]
-        proc_no = subprocess.Popen(cmd_nostatic, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        try:
-            resp_health = wait_for_http("127.0.0.1", port_nostatic, path="/health")
+        with probe_service(cmd_nostatic, cwd=tmp_path, env=env) as proc_no:
+            resp_health = wait_for_http("127.0.0.1", port_nostatic, path="/health", process=proc_no)
             if resp_health.status != 200:
                 raise AssertionError(f"Expected /health to return 200, got {resp_health.status}")
-            resp_root = wait_for_http("127.0.0.1", port_nostatic, path="/")
+            resp_root = wait_for_http("127.0.0.1", port_nostatic, path="/", process=proc_no)
             if resp_root.status != 404:
                 raise AssertionError(f"Expected root with --no-static to return 404, got {resp_root.status}")
-        finally:
-            proc_no.terminate()
-            proc_no.wait(timeout=5)
         log("  --no-static correctly keeps API active while bypassing static mount.")
 
 
@@ -208,11 +224,15 @@ def verify_wheel_members_match_source(zf: zipfile.ZipFile, backend_dir: Path, re
     from app.release_resources import source_files
 
     namelist = set(zf.namelist())
-    expected_paths: list[str] = list(required_assets)
+    expected_paths = set(required_assets)
     for source_path in source_files(backend_dir):
         rel = source_path.relative_to(backend_dir).as_posix()
-        if rel not in expected_paths:
-            expected_paths.append(rel)
+        expected_paths.add(rel)
+
+    unexpected = sorted(rel for rel in namelist if rel.startswith("app/") and not rel.endswith("/")
+                        and rel not in expected_paths)
+    if unexpected:
+        raise AssertionError(f"Unexpected app files in wheel: {unexpected}")
 
     for rel in expected_paths:
         if rel not in namelist:
@@ -230,7 +250,9 @@ def verify_wheel_build_and_contents(backend_dir: Path) -> None:
         wheel_dir = Path(tmp) / "dist"
         wheel_dir.mkdir()
 
-        cmd = ["uv", "build", "--wheel", "--out-dir", str(wheel_dir)]
+        # Build the wheel from a fresh sdist. A direct setuptools wheel build
+        # can silently repackage deleted modules left in an existing build/lib.
+        cmd = ["uv", "build", "--out-dir", str(wheel_dir)]
         result = subprocess.run(cmd, cwd=str(backend_dir), capture_output=True, text=True)
         if result.returncode != 0:
             raise AssertionError(f"Wheel build failed:\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}")
@@ -338,9 +360,7 @@ assert isinstance(codex_hooks["data"], dict), "codex hooks data must be dict"
 
 print("SUCCESS_ISOLATED_WHEEL_EXECUTION")
 """
-        env = {key: value for key, value in os.environ.items()
-               if key not in {"PYTHONPATH", "PYTHONHOME", "CONTEXTCORE_DB", "CONTEXTCORE_DATA_DIR",
-                              "CONTEXTCORE_TOKEN", "CONTEXTCORE_CREDENTIAL_PATH"}}
+        env = {"PATH": os.defpath, "HOME": str(Path(tmp).resolve())}
         exec_res = subprocess.run([str(python), "-I", "-c", test_script], cwd=tmp, env=env, capture_output=True, text=True)
         if exec_res.returncode != 0:
             raise AssertionError(f"Installed wheel execution probe failed:\n{exec_res.stderr}")
@@ -364,10 +384,10 @@ def verify_installed_console(console: Path, root: Path, env: dict, expected_vers
         cwd=root, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
     )
     try:
-        response = wait_for_http("127.0.0.1", port, "/")
+        response = wait_for_http("127.0.0.1", port, "/", process=process)
         if response.status != 200 or b"Installed wheel workspace" not in response.read():
             raise AssertionError("Installed console did not serve the selected workspace")
-        health = wait_for_http('127.0.0.1', port, '/health')
+        health = wait_for_http('127.0.0.1', port, '/health', process=process)
         if expected_version and json.loads(health.read()).get('version') != expected_version:
             raise AssertionError('Installed health version differs from wheel metadata')
         status = subprocess.run(

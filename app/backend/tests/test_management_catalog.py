@@ -298,7 +298,7 @@ def test_oversized_configuration_receipts_do_not_expand_status_memory_or_claim_f
     assert peak < 8 * 1024 * 1024 and len(json.dumps(state)) < 5000
 
 
-def test_provider_summary_exposes_default_model_and_cc_switch_current_hosts(manager):
+def test_provider_summary_exposes_declared_default_without_legacy_external_selection(manager):
     provider = manager.save('provider', {
         'name': 'DeepSeek',
         'protocol': 'anthropic',
@@ -312,6 +312,7 @@ def test_provider_summary_exposes_default_model_and_cc_switch_current_hosts(mana
     item = page['items'][0]
     assert item['id'] == provider['id']
     assert item['default_model'] == 'deepseek-v4-flash[1M]'
-    assert item['cc_switch_current_hosts'] == ['claude-code']
+    assert 'cc_switch_current_hosts' not in item
+    assert 'cc_switch_current_hosts' not in manager._public(manager.get('provider', provider['id']))
     assert 'model_map' not in item
 

@@ -39,6 +39,23 @@ def recover_connection_plan(connection_id: str, plan_id: str, payload: dict[str,
     return connection_plan_call('recover', connection_id, plan_id, payload.get('confirmed'))
 
 
+def check_connection_shortcut_root(plans, connection_id, payload):
+    from app.integrations.config_transactions import ConfigurationError
+    from app.services.host_registry import HOST_DEFINITIONS
+    host = HOST_DEFINITIONS.get(connection_id)
+    if not host:
+        raise HTTPException(status_code=404, detail="Unknown connection")
+    surface = payload.get("surface")
+    if surface is not None and surface not in host.surfaces:
+        raise HTTPException(status_code=422, detail="Select the target host entry")
+    try:
+        # An omitted Codex surface is ambiguous when CLI and Desktop use different roots.
+        plans.check_root(connection_id, surface)
+    except ConfigurationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from None
+    return surface or host.surfaces[0]
+
+
 @router.post("/{connection_id}/one-click-connect")
 def one_click_connect_endpoint(connection_id: str, request: Request, payload: dict[str, Any] = Body(default={})):
     """One-step Senrelay connection: discover history paths, enable history capture, and install MCP + skill + hook."""
@@ -48,8 +65,12 @@ def one_click_connect_endpoint(connection_id: str, request: Request, payload: di
     from app.services.connection_plans import ConnectionPlans, public_plan
     from app.services.host_registry import HOST_DEFINITIONS
     from app.integrations.config_transactions import ConfigurationError
-    from app.integrations.installer import _load_manifest
+    from app.integrations.installer import _manifest_path
+    from app.integrations.recovery import read_file
+    import json
 
+    cp = ConnectionPlans()
+    surface = check_connection_shortcut_root(cp, connection_id, payload)
     connection_service.discover_connections()
     current = connection_service.get_connection(connection_id)
     if isinstance(payload.get("paths"), list):
@@ -72,9 +93,11 @@ def one_click_connect_endpoint(connection_id: str, request: Request, payload: di
         try:
             home_dir = Path.home().resolve()
             cred_file = home_dir / ".contextcore" / "credentials" / f"{connection_id}.token"
-            manifest = _load_manifest(connection_id, home_dir)
-            if cred_file.is_file() and not cred_file.is_symlink() and manifest and manifest.get("token_hash"):
-                raw_token = cred_file.read_text(encoding="utf-8").strip()
+            manifest_bytes, _ = read_file(_manifest_path(connection_id, home_dir), home_dir)
+            manifest = json.loads(manifest_bytes) if manifest_bytes else {}
+            token_bytes, mode = read_file(cred_file, home_dir)
+            if token_bytes and len(token_bytes) <= 4096 and not mode & 0o077 and manifest.get("token_hash"):
+                raw_token = token_bytes.decode("utf-8").strip()
                 digest = hashlib.sha256(raw_token.encode("utf-8")).hexdigest() if raw_token else ""
                 if digest and digest == manifest.get("token_hash"):
                     with db() as conn:
@@ -86,11 +109,8 @@ def one_click_connect_endpoint(connection_id: str, request: Request, payload: di
                             )
         except Exception:
             pass
-        host_def = HOST_DEFINITIONS[connection_id]
-        surface = payload.get("surface") if payload.get("surface") in host_def.surfaces else host_def.surfaces[0]
         capabilities = payload.get("capabilities") if isinstance(payload.get("capabilities"), list) and payload.get("capabilities") else ["context_tools", "continuation", "lifecycle"]
         base_url = str(request.base_url).rstrip("/") if request else None
-        cp = ConnectionPlans()
         try:
             plan = cp.create(connection_id, {"operation": "install", "surface": surface, "capabilities": capabilities}, base_url)
             applied = cp.apply(connection_id, plan["id"], plan["version"], True)
@@ -118,22 +138,30 @@ def one_click_connect_endpoint(connection_id: str, request: Request, payload: di
 @router.post("/{connection_id}/one-click-disconnect")
 def one_click_disconnect_endpoint(connection_id: str, request: Request, payload: dict[str, Any] = Body(default={})):
     """One-step Senrelay disconnection: remove installed MCP/skill/hook components and disable history capture."""
-    from app.services.connection_plans import ConnectionPlans, public_plan
-    from app.services.host_registry import HOST_DEFINITIONS
+    import json
+    from app.services.connection_plans import CAPABILITIES, ConnectionPlans, public_plan
+    from app.integrations.config_transactions import ConfigurationError
+    from app.integrations.installer import _manifest_path
+    from app.integrations.recovery import read_file
 
+    cp = ConnectionPlans()
+    surface = check_connection_shortcut_root(cp, connection_id, payload)
     plan_result = None
-    if connection_id in HOST_DEFINITIONS:
-        host_def = HOST_DEFINITIONS[connection_id]
-        surface = payload.get("surface") if payload.get("surface") in host_def.surfaces else host_def.surfaces[0]
-        capabilities = payload.get("capabilities") if isinstance(payload.get("capabilities"), list) and payload.get("capabilities") else ["context_tools", "continuation", "lifecycle"]
-        base_url = str(request.base_url).rstrip("/") if request else None
-        cp = ConnectionPlans()
-        try:
-            plan = cp.create(connection_id, {"operation": "uninstall", "surface": surface, "capabilities": capabilities}, base_url)
-            applied = cp.apply(connection_id, plan["id"], plan["version"], True)
-            plan_result = public_plan(applied)
-        except Exception:
-            pass
+    try:
+        raw, _ = read_file(_manifest_path(connection_id, cp.home), cp.home)
+        if raw is not None:
+            manifest = json.loads(raw)
+            installed = manifest.get("components", list(CAPABILITIES.values()))
+            if not isinstance(installed, list) or not installed or not all(isinstance(c, str) and c in CAPABILITIES.values() for c in installed):
+                raise ValueError("Invalid installed components")
+            capabilities = payload.get("capabilities") or [key for key, component in CAPABILITIES.items() if component in installed]
+            plan = cp.create(connection_id, {"operation": "uninstall", "surface": surface, "capabilities": capabilities},
+                             str(request.base_url).rstrip("/"))
+            plan_result = public_plan(cp.apply(connection_id, plan["id"], plan["version"], True))
+    except ConfigurationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from None
+    except (OSError, ValueError, TypeError, AttributeError):
+        raise HTTPException(status_code=409, detail="Host integration could not be removed. Review the connection files and retry.") from None
 
     updated_conn = connection_service.patch_connection(
         connection_id=connection_id,

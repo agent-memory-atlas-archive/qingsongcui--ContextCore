@@ -1,15 +1,12 @@
 """Behavioral tests for release distribution, packaging, and static discovery contracts."""
 from __future__ import annotations
 
-import http.client
 import io
 import json
 import os
 from pathlib import Path
-import socket
 import subprocess
 import sys
-import time
 from unittest.mock import patch
 
 import pytest
@@ -17,22 +14,11 @@ import pytest
 from app import cli, runtime
 
 
-def find_free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
-def wait_for_http(host: str, port: int, path: str = "/health", timeout: float = 6.0) -> http.client.HTTPResponse:
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            conn = http.client.HTTPConnection(host, port, timeout=1.0)
-            conn.request("GET", path)
-            return conn.getresponse()
-        except (OSError, http.client.HTTPException):
-            time.sleep(0.1)
-    raise TimeoutError(f"Server at {host}:{port} did not respond within {timeout}s")
+@pytest.fixture
+def readiness(monkeypatch):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts"))
+    import check_release_readiness
+    return check_release_readiness
 
 
 def test_cli_serve_explicit_missing_frontend_fails(tmp_path: Path) -> None:
@@ -47,7 +33,7 @@ def test_cli_serve_explicit_missing_frontend_fails(tmp_path: Path) -> None:
         assert "Explicit frontend distribution is unavailable" in mock_stderr.getvalue()
 
 
-def test_cli_serve_static_discovery_behavior(tmp_path: Path) -> None:
+def test_cli_serve_static_discovery_behavior(tmp_path: Path, readiness) -> None:
     """CLI serve mounts frontend distribution and responds with 200 on root path."""
     backend_dir = Path(__file__).resolve().parent.parent
     data_dir = tmp_path / "data"
@@ -58,9 +44,8 @@ def test_cli_serve_static_discovery_behavior(tmp_path: Path) -> None:
     marker = "MARKER_TEST_DIST_STAGING_CONTENT"
     (fake_frontend / "index.html").write_text(f"<!doctype html><html><body>{marker}</body></html>\n", encoding="utf-8")
 
-    port = find_free_port()
-    env = os.environ.copy()
-    env["PYTHONPATH"] = str(backend_dir)
+    port = readiness.find_free_port()
+    env = {"PATH": os.defpath, "PYTHONPATH": str(backend_dir)}
     home = (tmp_path / 'home').resolve()
     home.mkdir()
     env['HOME'] = str(home)
@@ -72,23 +57,14 @@ def test_cli_serve_static_discovery_behavior(tmp_path: Path) -> None:
         "--data-dir", str(data_dir),
         "--frontend-dir", str(fake_frontend),
     ]
-    proc = subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    try:
-        with wait_for_http("127.0.0.1", port, path="/") as resp:
+    with readiness.probe_service(cmd, cwd=tmp_path, env=env) as proc:
+        with readiness.wait_for_http("127.0.0.1", port, path="/", process=proc) as resp:
             assert resp.status == 200
             body = resp.read().decode("utf-8")
             assert marker in body
-    finally:
-        proc.terminate()
-        try:
-            proc.communicate(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.communicate(timeout=5)
-            raise
 
 
-def test_cli_serve_no_static_flag_behavior(tmp_path: Path) -> None:
+def test_cli_serve_no_static_flag_behavior(tmp_path: Path, readiness) -> None:
     """When --no-static is passed, API serves health but static root returns 404."""
     backend_dir = Path(__file__).resolve().parent.parent
     data_dir = tmp_path / "data"
@@ -98,9 +74,8 @@ def test_cli_serve_no_static_flag_behavior(tmp_path: Path) -> None:
     fake_frontend.mkdir()
     (fake_frontend / "index.html").write_text("<!doctype html><html><body>STATIC</body></html>\n", encoding="utf-8")
 
-    port = find_free_port()
-    env = os.environ.copy()
-    env["PYTHONPATH"] = str(backend_dir)
+    port = readiness.find_free_port()
+    env = {"PATH": os.defpath, "PYTHONPATH": str(backend_dir)}
     home = (tmp_path / 'home').resolve()
     home.mkdir()
     env['HOME'] = str(home)
@@ -113,21 +88,12 @@ def test_cli_serve_no_static_flag_behavior(tmp_path: Path) -> None:
         "--frontend-dir", str(fake_frontend),
         "--no-static",
     ]
-    proc = subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    try:
-        with wait_for_http("127.0.0.1", port, path="/health") as resp_health:
+    with readiness.probe_service(cmd, cwd=tmp_path, env=env) as proc:
+        with readiness.wait_for_http("127.0.0.1", port, path="/health", process=proc) as resp_health:
             assert resp_health.status == 200
 
-        with wait_for_http("127.0.0.1", port, path="/") as resp_root:
+        with readiness.wait_for_http("127.0.0.1", port, path="/", process=proc) as resp_root:
             assert resp_root.status == 404
-    finally:
-        proc.terminate()
-        try:
-            proc.communicate(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.communicate(timeout=5)
-            raise
 
 
 def test_release_preparation_and_activation_safeguards(tmp_path: Path) -> None:

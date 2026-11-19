@@ -59,7 +59,7 @@ describe('evidence secret boundaries', () => {
       },
     };
     const output = safeEvidence(input);
-    expect(output.local_active_hosts).toEqual(['codex', 'claude-code']);
+    expect(output).not.toHaveProperty('local_active_hosts');
     expect(output).not.toHaveProperty('cc_switch_current_hosts');
     expect(output).not.toHaveProperty('reference_commit');
     expect(output.source).toEqual({
@@ -84,7 +84,8 @@ describe('legacy backend compatibility', () => {
     expect(backendCompatibility({ data: { ok: true }, loading: false })).toBe('upgrade_required');
   });
   it('keeps verified capability data during refresh but never trusts stale data after errors', () => {
-    const data = { counts: {}, capabilities: { plan_apply_readback: true } };
+    expect(backendCompatibility({ data: { counts: {}, capabilities: { plan_apply_readback: true } } })).toBe('upgrade_required');
+    const data = { counts: {}, capabilities: { independent_workbench: true, plan_apply_readback: true } };
     expect(backendCompatibility({ data, loading: true })).toBe('ready');
     expect(backendCompatibility({ data, error: { status: 404 } })).toBe('upgrade_required');
     expect(backendCompatibility({ data, error: { status: 0 } })).toBe('unavailable');
@@ -142,4 +143,13 @@ describe('native management failure feedback', () => {
       expect(error.detail).toBeUndefined();
     }
   });
+});
+
+it('names the other Codex surface in shared configuration notices', async () => {
+  const { hostNotice } = await import('../src/lib/management.js');
+  const cli = hostNotice('codex', 'configuration');
+  const desktop = hostNotice('codex-desktop', 'configuration');
+  expect(cli).toContain('Codex Desktop');
+  expect(cli).not.toContain('Codex CLI');
+  expect(desktop).toContain('Codex CLI');
 });

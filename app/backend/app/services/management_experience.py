@@ -27,8 +27,13 @@ def setup_provider(manager, body: dict) -> dict:
     if host_id not in HOSTS:
         raise ConfigurationError("Unknown host", 422)
     definition = body.get("provider")
-    if not isinstance(definition, dict) or set(definition) - {"name", "base_url", "protocol", "wire_api", "supported_endpoints"}:
+    if not isinstance(definition, dict) or set(definition) - {"name", "base_url", "protocol", "wire_api", "supported_endpoints", "account_id", "credential_source"}:
         raise ConfigurationError("Provider setup accepts connection and declared API endpoint fields", 422)
+    if ("account_id" in definition or "credential_source" in definition) and (
+        not isinstance(definition.get("account_id"), str) or not definition["account_id"]
+        or definition.get("credential_source") != "account" or body.get("secret") is not None
+    ):
+        raise ConfigurationError("Choose either one account or a provider credential", 422)
     provider = manager._validate("provider", {**definition, "agent_ids": [host_id]})
     native_model = body.get("model_id")
     if not isinstance(native_model, str) or not native_model.strip() or len(native_model) > 200 or any(ord(char) < 32 for char in native_model):
@@ -57,6 +62,7 @@ def setup_provider(manager, body: dict) -> dict:
     if host_id == 'kimi-code' and capacity is None:
         raise ConfigurationError('Kimi setup requires the model context_window before saving', 422)
 
+    provider["default_model"] = native_model
     reference = manager._store_secret(secret) if secret is not None else None
     if reference:
         provider["credential_ref"] = reference
@@ -68,6 +74,11 @@ def setup_provider(manager, body: dict) -> dict:
     try:
         with manager.connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
+            if definition.get("account_id"):
+                account = conn.execute("SELECT json_extract(data,'$.provider_id') FROM management_entities WHERE kind='account' AND id=?",
+                                       (definition["account_id"],)).fetchone()
+                if not account or account[0]:
+                    raise ConfigurationError("Account binding changed; select an available account", 409)
             conn.execute("INSERT INTO management_entities VALUES(?,?,?,1,?,?)", (provider_id, "provider", canonical(provider), now, now))
             conn.execute("INSERT INTO management_entities VALUES(?,?,?,1,?,?)", (model_id, "model", canonical(model), now, now))
             conn.execute("INSERT INTO management_provider_setups VALUES(?,?,?,?,?)", (request_id, fingerprint, provider_id, model_id, now))
@@ -166,6 +177,8 @@ def revise_provider_setup(manager, body: dict) -> dict:
                 merged_provider.pop(key, None)
             else:
                 merged_provider[key] = definition[key]
+    if stored_provider.get("default_model") in (None, stored_model["model_id"]):
+        merged_provider["default_model"] = native_model
     merged_provider = manager._validate("provider", merged_provider, entity_id=provider_id)
     merged_model = _without_identity(stored_model)
     merged_model.update(name=native_model, model_id=native_model, provider_id=provider_id)
@@ -252,11 +265,11 @@ def _combined(entries):
 def host_state(manager, host_id: str) -> dict:
     if host_id not in HOSTS:
         raise ConfigurationError("Unknown host", 422)
-    from app.integrations.host_management_native import effective_host, configuration_paths, shadowed_configuration_paths
-    host = effective_host(HOSTS[host_id], manager.home)
+    from app.integrations.host_management_native import configuration_paths, shadowed_configuration_paths
+    host = manager.host_config(host_id)
     paths = configuration_paths(host, manager.home)
     if host_id in ("codex", "codex-desktop"):
-        paths.append(str(manager.home / ".codex/config.toml"))
+        paths.append(str(manager.home / host["mcp_path"]))
     skill_prefix = str(manager.home / host["skill_dir"]) + "/" if host.get("skill_dir") else "\x00"
     prompt_prefix = str(manager.home / host["prompt_dir"]) + "/" if host.get("prompt_dir") else "\x00"
     with manager.connect() as conn:
@@ -295,16 +308,20 @@ def host_state(manager, host_id: str) -> dict:
     applied_versions, latest, recovering, dependencies = {}, {}, [], {}
     owned_ids = {active.get('provider_id'), *(entry['owner'] for entry in owned[:500])} - {None}
     metadata_limited = len(recent) > 300 or any(row['metadata_bytes'] > 4194304 for row in recent[:300])
+    undone = {meta['undo_plan_id'] for row in recent[:300]
+              if row['status'] == 'applied' and (meta := json.loads(row['metadata'] or '{}')).get('undo_plan_id')}
     for row in recent[:300]:
         metadata = json.loads(row["metadata"] or "{}")
         if row["status"] in ("applying", "recovery_required"):
             recovering.append({"id": row["id"], "status": row["status"]})
+        if row['id'] in undone or metadata.get('undo_plan_id'):
+            continue
         for entity_id, version in metadata.get("entity_versions", {}).items():
             if entity_id not in owned_ids and len(latest) >= 500:
                 metadata_limited = True
                 continue
             if row["status"] == "applied" and entity_id not in latest:
-                latest[entity_id] = {"plan_id": row["id"], "operation": metadata.get("operation"), "updated_at": row["updated_at"]}
+                latest[entity_id] = {"plan_id": row["id"], "operation": "uninstall" if entity_id in metadata.get("removed_assets", []) else metadata.get("operation"), "updated_at": row["updated_at"]}
                 applied_versions[entity_id] = version
                 ids = metadata.get('provider_dependencies', {}).get(entity_id, [])
                 dependencies[entity_id] = {key: metadata['entity_versions'].get(key) for key in ids}
@@ -331,6 +348,9 @@ def host_state(manager, host_id: str) -> dict:
             state = 'update_available'
         resources[item["id"]] = {"kind": item['kind'], "status": state, "paths": len({value["path"] for value in entry}),
             "definition_version": item["version"], "applied_version": applied_versions.get(item["id"]), **receipt}
+    from app.services import native_asset_origin
+    original_resources, original_partial = native_asset_origin.descriptors(manager, host_id, resources)
+    resources.update(original_resources)
     names = {item["id"]: item["name"] for item in definitions}
     active_entries = [entry for entry in inspected if entry["owner"] in ("activation:" + host_id, active.get('provider_id'))]
     with manager.connect() as conn:
@@ -345,14 +365,14 @@ def host_state(manager, host_id: str) -> dict:
     if active.get('selection_receipt_unknown'):
         activation_status = 'not_checked'
     return {"host_id": host_id, "provider_mode": "single_selection" if host_id in ("codex", "codex-desktop", "claude-code") else host.get("provider_mode", "coexist_named_entries"),
-        "selection": {"provider_id": active.get("provider_id"), "provider_name": names.get(active.get("provider_id")), 'connection_mode': gateway['mode'] if gateway_selected else 'direct',
+        "selection": {**{key: (active.get('model_selection') or {}).get(key) for key in ('protocol','credential_source','account_id','account_name')}, "provider_id": active.get("provider_id"), "provider_name": names.get(active.get("provider_id")), 'connection_mode': gateway['mode'] if gateway_selected else 'direct',
             "model_id": active.get("model_id"), "status": activation_status, 'receipt_unknown': bool(active.get('selection_receipt_unknown')), "updated_at": active_row["updated_at"] if active_row else None,
             "host_loaded": "not_verified", "activation_method": "restart_and_verify"},
         "effects": {"selection": "recorded" if active.get("provider_id") else "not_selected_by_senrelay", "configuration": activation_status,
             "host_loaded": "not_verified", "reachability": "not_checked", "authentication": "not_checked", "invocation": "not_checked"},
         "resources": resources, "recovery": recovering,
         "env_conflicts": check_env_conflicts(manager, host_id)["conflicts"],
-        "coverage": "partial" if len(owned) > 500 or len(recent) > 300 or metadata_limited or any(entry["status"] == "not_checked" for entry in inspected) else "complete_owned_entries",
+        "coverage": "partial" if original_partial or len(owned) > 500 or len(recent) > 300 or metadata_limited or any(entry["status"] == "not_checked" for entry in inspected) else "complete_owned_entries",
         "checked_at": datetime.now(timezone.utc).isoformat(), "credentials_read": False, "host_executed": False}
 
 

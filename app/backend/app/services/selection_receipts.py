@@ -8,6 +8,7 @@ HEADER_SQL = """json_object(
     'provider_id',json_extract(data,'$.provider_id'),
     'model_id',json_extract(data,'$.model_id'),
     'last_plan_id',json_extract(data,'$.last_plan_id'),
+    'model_selection',json_extract(data,'$.model_selection'),
     'selection_receipt_version',json_extract(data,'$.selection_receipt_version'),
     'selection_receipt_unknown',json_extract(data,'$.selection_receipt_unknown'),
     'has_selection_fields',CASE WHEN json_extract(data,'$.selection_receipt_version')=1 THEN 0 ELSE

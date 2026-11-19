@@ -437,7 +437,7 @@ def test_hook_runner_path_shell_quoted():
     assert f"'{path_with_spaces}'" in ag_cmd or f'"{path_with_spaces}"' in ag_cmd
 
 
-def test_local_sync_preserves_owned_host_skill_and_manifest():
+def test_native_preview_preserves_owned_host_skill_and_manifest(monkeypatch):
     """Importing local assets must never upgrade even an unmodified owned skill."""
     import hashlib
     from app.database import create_schema
@@ -445,7 +445,7 @@ def test_local_sync_preserves_owned_host_skill_and_manifest():
 
     create_schema()
     with tempfile.TemporaryDirectory() as temp_dir:
-        temp_home = Path(temp_dir)
+        temp_home = Path(temp_dir).resolve()
         installed = apply_host_integration("codex", token="cc-skill-refresh", confirmed=True, home=temp_home)
         assert installed.status == "installed"
         skill_path = temp_home / ".codex" / "skills" / "contextcore" / "SKILL.md"
@@ -460,7 +460,15 @@ def test_local_sync_preserves_owned_host_skill_and_manifest():
             for path in temp_home.rglob("*") if path.is_file()
         }
 
-        ManagementService(home=temp_home).sync_local_environment()
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from app.routers import manage
+        manager = ManagementService(home=temp_home)
+        monkeypatch.setattr(manage.management, "service", lambda: manager)
+        api = FastAPI()
+        api.include_router(manage.router)
+        response = TestClient(api).post("/api/manage/hosts/codex/native/preview", json={"kind": "skills"})
+        assert response.status_code == 200, response.text
 
         after = {
             str(path.relative_to(temp_home)): path.read_bytes()

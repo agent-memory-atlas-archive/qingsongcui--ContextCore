@@ -38,9 +38,6 @@ from app.services import (
     conversation_service,
     distillation_service,
     handoff_service,
-    management_experience,
-    management_service,
-    migration_service,
     project_service,
     provider_checks,
     retrieval_service,
@@ -775,7 +772,7 @@ def test_group5_antigravity_cursor_and_codex_adapters(tmp_path, monkeypatch):
 
 # ---------------------------------------------------------------------------
 # Group 6: SSRF DNS/IP blocking, backup_database guards, runtime/CLI stop,
-#          sync_local_environment safety, sync_to_hosts conflicts, CC Switch cleanup
+#          sync_to_hosts conflicts
 # ---------------------------------------------------------------------------
 
 
@@ -861,147 +858,12 @@ def test_group6_ssrf_backup_stop_and_management_sync(tmp_path, monkeypatch):
     occupied_code = cli.main(["stop", "--data-dir", str(empty_data_dir), "--port", "18420", "--require-port-free"])
     assert occupied_code == 1
 
-    # 4. sync_local_environment: symlinked MCP resilience, existing entity preservation,
-    #    multi-file skill sync, cc_app_to_host mapping, export sanitization, sync_to_hosts conflicts
     home_dir = tmp_path / "mgr_home"
     home_dir.mkdir()
     vault = _InMemoryVault()
     set_secret_store(vault)
     try:
-        mgr = ManagementService(tmp_path / "mgr.db", home_dir, vault)
-
-        # Pre-create user-customized provider & MCP asset with cwd and {{credential:...}}
-        cred_ref = vault.put("secret-mcp-token")
-        existing_prov = mgr.save(
-            "provider",
-            {
-                "name": "DeepSeek Custom",
-                "protocol": "openai",
-                "base_url": "https://api.deepseek.com/v1",
-                "model_map": {"default": "user-picked-model"},
-                "supported_endpoints": ["chat/completions"],
-                "agent_ids": ["codex"],
-            },
-        )
-        existing_mcp = mgr.save(
-            "asset",
-            {
-                "kind": "mcp",
-                "name": "custom-mcp",
-                "agent_ids": ["codex"],
-                "config": {
-                    "transport": "stdio",
-                    "command": "npx",
-                    "args": [],
-                    "cwd": "/opt/custom-mcp",
-                    "env": {"API_TOKEN": f"{{{{credential:{cred_ref}}}}}"},
-                },
-            },
-        )
-
-        # Create ~/.cc-switch/cc-switch.db with agy, grokbuild, openclaw + DeepSeek Custom
-        cc_dir = home_dir / ".cc-switch"
-        cc_dir.mkdir()
-        with sqlite3.connect(cc_dir / "cc-switch.db") as cc_conn:
-            cc_conn.executescript(
-                """
-                CREATE TABLE providers (
-                    id TEXT, app_type TEXT, name TEXT, settings_config TEXT, is_current INTEGER, sort_index INTEGER, meta TEXT
-                );
-                CREATE TABLE prompts (
-                    id TEXT, app_type TEXT, name TEXT, content TEXT, enabled INTEGER
-                );
-                """
-            )
-            cc_conn.execute(
-                "INSERT INTO providers VALUES (?, ?, ?, ?, 1, 1, '{}')",
-                (
-                    "p1",
-                    "claude",
-                    "DeepSeek Custom",
-                    json.dumps({"env": {"OPENAI_BASE_URL": "https://api.deepseek.com/v1", "OPENAI_MODEL": "overwritten-model"}}),
-                ),
-            )
-            cc_conn.execute(
-                "INSERT INTO prompts VALUES ('pr-agy', 'agy', 'AGY Prompt', 'Use strict types', 1)"
-            )
-            cc_conn.execute(
-                "INSERT INTO prompts VALUES ('pr-grok', 'grokbuild', 'Grok Prompt', 'Check edge cases', 1)"
-            )
-            cc_conn.execute(
-                "INSERT INTO prompts VALUES ('pr-claw', 'openclaw', 'OpenClaw Prompt', 'Verify configs', 1)"
-            )
-
-        # Symlinked host MCP file (~/.claude.json -> outside target) must NOT abort sync-local with 409/422
-        outside_mcp = tmp_path / "outside_claude.json"
-        outside_mcp.write_text('{"mcpServers": {}}', encoding="utf-8")
-        (home_dir / ".claude.json").symlink_to(outside_mcp)
-
-        # Valid Cursor MCP config supplying args for custom-mcp
-        (home_dir / ".cursor").mkdir()
-        (home_dir / ".cursor" / "mcp.json").write_text(
-            json.dumps({"mcpServers": {"custom-mcp": {"command": "npx", "args": ["-y", "@custom/mcp"]}}}),
-            encoding="utf-8",
-        )
-
-        # Multi-file local skill with scripts/ and references/
-        s_dir = home_dir / ".codex" / "skills" / "multi-file-skill"
-        (s_dir / "scripts").mkdir(parents=True)
-        (s_dir / "references").mkdir(parents=True)
-        (s_dir / "SKILL.md").write_text("# Multi File Skill\n", encoding="utf-8")
-        (s_dir / "scripts" / "run_check.py").write_text("print('ok')\n", encoding="utf-8")
-        (s_dir / "references" / "guide.md").write_text("Authorization: Bearer sk-1234567890abcdef\n", encoding="utf-8")
-
-        sync_out = mgr.sync_local_environment()
-        # Symlinked ~/.claude.json recorded as non-fatal host-mcp failure rather than raising ConfigurationError
-        assert sync_out["ok"] is False
-        assert any(f["stage"] == "host-mcp" and f["name"] == "claude-code" for f in sync_out["failures"])
-
-        # Pre-existing provider's model_map, supported_endpoints, agent_ids were preserved!
-        after_prov = mgr.get("provider", existing_prov["id"])
-        assert after_prov["model_map"] == {"default": "user-picked-model"}
-        assert after_prov["supported_endpoints"] == ["chat/completions"]
-        assert after_prov["agent_ids"] == ["codex"]
-
-        # Pre-existing MCP asset preserved agent_ids, cwd, AND {{credential:...}} env while filling missing args!
-        after_mcp = mgr.get("asset", existing_mcp["id"])
-        assert after_mcp["agent_ids"] == ["codex"]
-        assert after_mcp["config"]["cwd"] == "/opt/custom-mcp"
-        assert after_mcp["config"]["args"] == ["-y", "@custom/mcp"]
-        assert after_mcp["config"]["env"]["API_TOKEN"] == f"{{{{credential:{cred_ref}}}}}"
-
-        # cc_app_to_host mappings verified
-        prompts_by_name = {a["name"]: a for a in mgr.list("asset") if a["kind"] == "prompt"}
-        assert prompts_by_name["AGY Prompt"]["agent_ids"] == ["antigravity-cli"]
-        assert prompts_by_name["Grok Prompt"]["agent_ids"] == ["grok-build"]
-        assert prompts_by_name["OpenClaw Prompt"]["agent_ids"] == ["openclaw"]
-
-        # Multi-file skill collected sibling files with secret redaction
-        skills_by_name = {a["name"]: a for a in mgr.list("asset") if a["kind"] == "skill"}
-        mf_files = skills_by_name["multi-file-skill"]["files"]
-        assert set(mf_files.keys()) == {"SKILL.md", "scripts/run_check.py", "references/guide.md"}
-        assert "sk-1234567890abcdef" not in mf_files["references/guide.md"]
-        assert "[REDACTED]" in mf_files["references/guide.md"]
-
-        # export() strips cc_switch_current_hosts and normalizes source.type == "cc-switch" -> "local-sync"
-        exported = mgr.export()
-        exported_json = json.dumps(exported)
-        assert "cc_switch_current_hosts" not in exported_json
-        assert '"cc-switch"' not in exported_json
-        exported_agy = next(o["data"] for o in exported["objects"] if o["data"].get("name") == "AGY Prompt")
-        assert exported_agy["source"] == {"type": "local-sync"}
-
-        # import_objects accepts "local-sync" and "compatible" in addition to "cc-switch"
-        mgr2 = ManagementService(tmp_path / "mgr2.db", tmp_path / "mgr2_home", vault)
-        imp_res = mgr2.import_objects(
-            {
-                "format": "local-sync",
-                "data": {"prompts": [{"name": "Synced Prompt", "content": "Hello"}]},
-            }
-        )
-        assert len(imp_res["imported"]) == 1
-        assert imp_res["imported"][0]["source"] == {"type": "local-sync"}
-
+        mgr2 = ManagementService(tmp_path / "mgr.db", home_dir, vault)
         # sync_to_hosts reports conflict_preview separately instead of claiming status == "applied"
         conflict_mcp = mgr2.save(
             "asset",
@@ -1027,8 +889,3 @@ def test_group6_ssrf_backup_stop_and_management_sync(tmp_path, monkeypatch):
         monkeypatch.setattr(mgr2, "apply", orig_apply)
     finally:
         set_secret_store(None)
-
-    # 5. Docstrings in migration_service, management_service, management_experience have no "CC Switch"
-    for mod_or_fn in (migration_service, management_service.ManagementService.sync_local_environment, management_experience.check_env_conflicts):
-        doc = inspect.getdoc(mod_or_fn) or ""
-        assert "CC Switch" not in doc

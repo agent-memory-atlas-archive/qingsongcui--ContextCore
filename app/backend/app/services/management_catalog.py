@@ -9,11 +9,11 @@ from app.services.provider_credentials import account_status
 
 
 def _owned_scope(manager, host_id, alias):
-    from app.integrations.host_management_native import effective_host, configuration_paths
-    host = effective_host(HOSTS[host_id], manager.home)
+    from app.integrations.host_management_native import configuration_paths
+    host = manager.host_config(host_id, display=True)
     paths = configuration_paths(host, manager.home)
     if host_id in ('codex', 'codex-desktop'):
-        paths.append(str(manager.home / '.codex/config.toml'))
+        paths.append(str(manager.home / host['mcp_path']))
     prefix = str(manager.home / host['skill_dir']) + '/' if host.get('skill_dir') else '\x00'
     prompt_prefix = str(manager.home / host['prompt_dir']) + '/' if host.get('prompt_dir') else '\x00'
     path_sql = ('o.path IN (' + ','.join('?' for _ in paths) + ') OR ' if paths else '') + 'substr(o.path,1,?)=? OR substr(o.path,1,?)=?'
@@ -94,17 +94,19 @@ def catalog_page(manager, kind, *, agent_id=None, resource_kind=None, provider_i
     fields += [f"substr(json_extract(e.data,'$.{name}'),1,{size}) AS {name}" for name, size in TEXT_FIELDS.items()]
     fields += [f"substr(json_extract(e.data,'$.source.{name}'),1,{size}) AS source_{name}" for name, size in SOURCE_FIELDS.items()]
     known_hosts = ','.join("'" + host.replace("'", "''") + "'" for host in HOSTS)
-    fields += [f"CASE WHEN json_type(e.data,'$.{name}')='array' THEN (SELECT json_group_array(DISTINCT value) FROM json_each(e.data,'$.{name}') WHERE value IN ({known_hosts})) ELSE NULL END AS {name}" for name in ('agent_ids', 'host_ids', 'cc_switch_current_hosts')]
+    fields += [f"CASE WHEN json_type(e.data,'$.{name}')='array' THEN (SELECT json_group_array(DISTINCT value) FROM json_each(e.data,'$.{name}') WHERE value IN ({known_hosts})) ELSE NULL END AS {name}" for name in ('agent_ids', 'host_ids')]
     fields += ["CASE WHEN json_type(e.data,'$.supported_endpoints')='array' THEN (SELECT json_group_array(DISTINCT value) FROM json_each(e.data,'$.supported_endpoints') WHERE value IN ('chat/completions','responses','messages','generateContent')) ELSE NULL END AS supported_endpoints"]
     fields += ["CASE WHEN e.kind='provider' THEN substr(coalesce("
                "json_extract(e.data,'$.default_model'), "
                "json_extract(e.data,'$.model_map.default'), "
-               "(SELECT value FROM json_each(CASE WHEN json_type(e.data,'$.model_map')='object' THEN json_extract(e.data,'$.model_map') ELSE '{}' END) WHERE typeof(value)='text' LIMIT 1), "
-               "(SELECT json_extract(m.data,'$.model_id') FROM management_entities m WHERE m.kind='model' AND json_extract(m.data,'$.provider_id')=e.id ORDER BY m.created_at, m.id LIMIT 1)"
+               "(SELECT CASE WHEN COUNT(DISTINCT native)=1 THEN min(native) END FROM ("
+               "SELECT value AS native FROM json_each(e.data,'$.model_map') WHERE typeof(value)='text' "
+               "UNION ALL SELECT json_extract(m.data,'$.model_id') FROM management_entities m "
+               "WHERE m.kind='model' AND json_extract(m.data,'$.provider_id')=e.id))"
                "),1,200) ELSE NULL END AS default_model"]
     fields += ["CASE WHEN json_type(e.data,'$.context_window')='integer' THEN json_extract(e.data,'$.context_window') ELSE NULL END AS context_window",
                "CASE WHEN json_type(e.data,'$.sort_index')='integer' THEN json_extract(e.data,'$.sort_index') ELSE NULL END AS sort_index",
-               "json_extract(e.data,'$.enabled') AS enabled", "json_extract(e.data,'$.credential_reattach_required') AS credential_reattach_required", "json_extract(e.data,'$.credential_ref') IS NOT NULL AS has_credential"]
+               "json_extract(e.data,'$.native_review_required') AS native_review_required", "json_extract(e.data,'$.enabled') AS enabled", "json_extract(e.data,'$.credential_reattach_required') AS credential_reattach_required", "json_extract(e.data,'$.credential_ref') IS NOT NULL AS has_credential"]
     fields += ["(SELECT substr(json_extract(a.data,'$.name'),1,200) FROM management_entities a WHERE a.kind='account' AND a.id=json_extract(e.data,'$.account_id')) AS account_name"]
     clause = ' AND '.join(where)
     with manager.connect() as conn:
@@ -119,13 +121,22 @@ def catalog_page(manager, kind, *, agent_id=None, resource_kind=None, provider_i
                 deadline = f"coalesce({deadline}, (SELECT f.expires_at FROM management_oauth_flows f WHERE f.state_hash=json_extract(e.data,'$.oauth_flow') AND f.account_id=e.id))"
             fields.append(deadline + ' AS authorization_expires_at')
         total = conn.execute('SELECT COUNT(*) FROM management_entities e WHERE ' + clause, params).fetchone()[0]
-        rows = conn.execute('SELECT ' + ','.join(fields) + ' FROM management_entities e WHERE ' + clause + " ORDER BY COALESCE(CASE WHEN json_type(e.data,'$.sort_index')='integer' THEN json_extract(e.data,'$.sort_index') END, 999999), e.created_at, e.id LIMIT ? OFFSET ?", [*params, limit, offset]).fetchall()
+        order = "COALESCE(CASE WHEN json_type(e.data,'$.sort_index')='integer' THEN json_extract(e.data,'$.sort_index') END, 999999), e.created_at, e.id"
+        pinned, recent = [], {}
+        if kind == 'provider' and agent_id and scope == 'assigned':
+            from app.services.agent_preferences import provider_order
+            ranks, pinned, recent = provider_order(conn, agent_id)
+            if ranks:
+                conn.create_function('shortcut_rank', 1, lambda identifier: ranks.get(identifier, len(ranks)))
+                order = 'shortcut_rank(e.id), ' + order
+        rows = conn.execute('SELECT ' + ','.join(fields) + ' FROM management_entities e WHERE ' + clause
+                            + ' ORDER BY ' + order + ' LIMIT ? OFFSET ?', [*params, limit, offset]).fetchall()
     items = []
     for row in rows:
         item = {name: row[name] for name in ('id', 'version', 'created_at', 'updated_at')}
         item.update({name: row[name] for name in TEXT_FIELDS if row[name] is not None})
         item['source'] = {name: row['source_' + name] for name in SOURCE_FIELDS if row['source_' + name] is not None}
-        for name in ('agent_ids', 'host_ids', 'cc_switch_current_hosts'):
+        for name in ('agent_ids', 'host_ids'):
             if row[name] is not None:
                 item[name] = json.loads(row[name])
         if row['default_model'] is not None:
@@ -138,6 +149,8 @@ def catalog_page(manager, kind, *, agent_id=None, resource_kind=None, provider_i
             item['sort_index'] = row['sort_index']
         if row['enabled'] is not None:
             item['enabled'] = bool(row['enabled'])
+        if row['native_review_required'] is not None:
+            item['native_review_required'] = bool(row['native_review_required'])
         if row['credential_reattach_required'] is not None:
             item['credential_reattach_required'] = bool(row['credential_reattach_required'])
         item['has_credential'] = bool(row['has_credential'])
@@ -148,6 +161,9 @@ def catalog_page(manager, kind, *, agent_id=None, resource_kind=None, provider_i
             item['status'] = account_status(item)
             if (item['status'] == 'authorized' and row['expires_at_invalid']) or (item['status'] == 'authorizing' and row['authorization_expires_at_invalid']):
                 item['status'] = 'error'
+        if kind == 'provider' and agent_id and scope == 'assigned':
+            item['pinned'] = item['id'] in pinned
+            item['last_used_at'] = recent.get(item['id'])
         item['_summary'] = True
         if row['account_name'] is not None:
             item['account_name'] = row['account_name']

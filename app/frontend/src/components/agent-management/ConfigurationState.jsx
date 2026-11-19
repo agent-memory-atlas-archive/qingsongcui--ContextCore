@@ -1,12 +1,15 @@
 import { t } from '../../lib/i18n.jsx';
 import { Button, ErrorNotice } from '../ui.jsx';
+import { ProviderChecks } from '../ProviderChecks.jsx';
 import { Facts } from '../ManagementUI.jsx';
 
 export function configuredLabel(status) {
   const labels = {
     verified: t('配置已写入'), update_available: t('定义已更新，待应用'), externally_changed: t('配置已被外部修改'),
     missing: t('配置条目已缺失'), removed: t('已从助手移除'), unreadable: t('配置暂无法读取'),
-    not_checked: t('尚未检查全部条目'), not_managed: t('尚未应用')
+    not_checked: t('尚未检查全部条目'), not_managed: t('尚未应用'),
+    native_available: t('原生已有，可预览接管'), native_read_only: t('原生已有，仅可查看'),
+    native_source_changed: t('原生来源已变化，请重新核对'), native_source_missing: t('原生来源缺失')
   };
   return labels[status] || t('配置状态尚未读取');
 }
@@ -67,6 +70,8 @@ export function effectFacts(state, agent) {
   const recorded = effects.selection ? effects.selection === 'recorded' : Boolean(selection.provider_id);
   return [
     [t('当前选择'), recorded ? [selection.provider_name || t('服务商定义已移除'), selection.model_id || t('模型未记录')].join(' · ') : t('尚未由续境选择当前模型')],
+    ...(selection.protocol ? [[t('协议'), selection.protocol]] : []),
+    ...(selection.credential_source === 'account' ? [[t('绑定授权账号'), selection.account_name || t('账号名称待读取')]] : []),
     [t('配置文件'), configuredLabel(effects.configuration || selection.status)],
     [t('宿主加载'), pendingEffect('host_loaded', effects.host_loaded || selection.host_loaded, agent)],
     [t('连接可达'), pendingEffect('reachability', effects.reachability, agent)],
@@ -86,7 +91,7 @@ export function ConfiguredResource({ state, selected = false }) {
   </p>;
 }
 
-export function ConfigurationState({ resource, host, agent, ccSwitchCurrent = null, onRestore, onRecords, busy }) {
+export function ConfigurationState({ resource, host, agent, provider, onRestore, onRecords, onUsage, busy }) {
   const state = resource.data;
   const selection = state?.selection;
   const initialLoading = resource.loading && !state;
@@ -97,18 +102,20 @@ export function ConfigurationState({ resource, host, agent, ccSwitchCurrent = nu
     <div className="cc-software-row">
       <div className="cc-software-row-main">
         <span className="badge">{t('当前配置')}</span>
-        <h2>{selected ? selection.connection_mode && selection.connection_mode !== 'direct' ? t('续境本机连接') : selection.provider_name || t('服务商定义已移除') : ccSwitchCurrent ? ccSwitchCurrent.name : checked && selection?.provider_id ? t('当前选择需重新核对') : t('由助手管理当前选择')}</h2>
-        {selected ? <span className="status-badge is-active">{selection.model_id || t('模型未记录')} · {configuredLabel(selection.status)}</span> : ccSwitchCurrent ? <span className="status-badge is-active">{ccSwitchCurrent.default_model ? `${ccSwitchCurrent.default_model} · ${t('本机当前生效')}` : t('本机当前生效')}</span> : null}
+        <h2>{selected ? selection.connection_mode && selection.connection_mode !== 'direct' ? t('续境本机连接') : selection.provider_name || t('服务商定义已移除') : checked && selection?.provider_id ? t('当前选择需重新核对') : checked && state ? t('由助手管理当前选择') : t('配置状态尚未读取')}</h2>
+        {selected ? <span className="status-badge is-active">{selection.model_id || t('模型未记录')} · {configuredLabel(selection.status)}</span> : null}
       </div>
       <div className="toolbar-actions cc-software-row-actions">
-        {selected ? <Button disabled={busy || initialLoading || Boolean(resource.error)} onClick={onRestore}>{t('预览恢复原模型选择')}</Button> : null}
+        {selected && provider?.id === selection.provider_id ? <ProviderChecks compact provider={provider} contextTitle={agent} /> : null}
+        {onUsage ? <Button onClick={onUsage}>{t('使用情况')}</Button> : null}
+        {checked && selection?.provider_id ? <Button disabled={busy || initialLoading || Boolean(resource.error)} onClick={onRestore}>{t('预览恢复原模型选择')}</Button> : null}
         {state?.recovery?.length ? <Button variant="primary" disabled={busy} onClick={onRecords}>{t('有未完成更改，检查恢复')}</Button> : null}
         {checked && state ? <details className="cc-inline-popover"><summary>{t('此宿主的能力与验证证据')}</summary><div className="cc-inline-popover-body"><Facts values={effectFacts(state, agent)} /></div></details> : null}
         <Button busy={initialLoading} disabled={busy} onClick={resource.reload}>{t('读取配置状态')}</Button>
       </div>
     </div>
     <div className="agent-config-hint">
-      {selected ? <p>{selection.model_id || t('模型未记录')} · {configuredLabel(selection.status)}</p> : <p>{t('下方资料卡显示写入状态。助手里已有的登录和模型选择会保留，直到你确认切换。')}</p>}
+      {selected ? <p>{[selection.protocol, selection.credential_source === 'account' ? selection.account_name || t('绑定授权账号') : null, t('宿主采用待验证')].filter(Boolean).join(' · ')}</p> : <p>{t('下方资料卡显示写入状态。助手里已有的登录和模型选择会保留，直到你确认切换。')}</p>}
       <p>{!state || !checked ? t('读取配置后查看当前选择与应用方式。') : state.provider_mode === 'single_selection' ? t('这个助手一次选择一个默认服务商；切换会预览当前选择的变化。') : host.capabilities?.providers ? t('这个助手可以保留多个服务商；添加配置与选择默认模型分别操作。') : t('这个助手的模型选择请在它自己的界面完成。')}</p>
     </div>
     {checked && envConflicts.length > 0 ? <div className="cc-env-conflict-alert" role="status"><strong>{t('检测到环境变量冲突')}</strong><p>{t('检测到进程环境变量可能覆盖当前配置的密钥或地址：')}{envConflicts.map(item => `${item.env_var || item.variable} (${item.masked_value || item.source || 'env'})`).join(', ')}</p></div> : null}

@@ -29,7 +29,7 @@ def _guard_references(manager, host_id, host, provider_id, replacing_selected):
     from app.integrations.host_formats_v2 import ACTIVATION_FORMATS
     selected = False
     if host_id in ('codex', 'codex-desktop'):
-        document = _document(manager, '.codex/config.toml', 'toml')
+        document = _document(manager, host['mcp_path'], 'toml')
         selected = document.get('model_provider') == 'senrelay_' + provider_id.replace('provider_', '')
     elif host_id == 'opencode':
         document = _document(manager, host['provider_path'], 'json')
@@ -87,7 +87,7 @@ def owned_specs(manager, host_id, host, provider_id, *, replacing_selected=False
     from app.services.management_experience import _spec
     paths = [str(manager.home / host['provider_path'])] if host.get('provider_path') else []
     if host_id in ('codex', 'codex-desktop'):
-        paths.append(str(manager.home / '.codex/config.toml'))
+        paths.append(str(manager.home / host['mcp_path']))
     if not paths:
         raise ConfigurationError(host.get('provider_unsupported_reason', 'Provider configuration format is unsupported for this host'), 422)
     _guard_references(manager, host_id, host, provider_id, replacing_selected)

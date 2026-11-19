@@ -28,7 +28,7 @@ DEFAULTS = {"enabled": False, "provider_id": None, "request_timeout_seconds": 12
 
 def settings(conn=None):
     value = get_app_setting("routing_v2_settings", {}, conn=conn) or {}
-    return {**DEFAULTS, **{k: value[k] for k in DEFAULTS if k in value},
+    return {**DEFAULTS, **{k: value[k] for k in DEFAULTS if k in value}, "version": value.get("version", int(bool(value))),
             "token_configured": bool(get_app_setting("routing_v2_token_hash", None, conn=conn))}
 
 
@@ -77,6 +77,7 @@ def configure(patch):
                         409,
                         "Referenced provider does not exist in shared definitions; reload providers or remove stale route references before saving",
                     )
+            value["version"] = current["version"] + int(any(value[k] != current[k] for k in DEFAULTS))
             set_app_setting("routing_v2_settings", value, conn=conn)
             log_audit(actor="user", action="routing.configure", target="routing", conn=conn)
     return settings()
@@ -109,7 +110,7 @@ def status():
     return {**value, "state": "enabled" if value["enabled"] else "disabled", "protocol_conversion": "strict_text_and_tools",
             "automatic_retry": False, "safe_configured_failover": True, "compute_authorized": False,
             "active_requests": len(_active), "capabilities": ["openai_chat_passthrough", "openai_responses_passthrough", "anthropic_messages_passthrough"],
-            "host_configuration_applied": False, "circuits": circuit_status(),
+            "host_configuration_applied": False, "circuits": circuit_status(version=value["version"]),
             "capability_matrix": {"native_openai_chat": "implemented", "native_openai_responses": "implemented", "native_anthropic_messages": "implemented", "cross_protocol_conversion": "text_system_tools_only", "openai_to_anthropic_stream": "buffered_until_final_usage", "complex_thinking_images": "unsupported_explicit_422", "cross_responses": "unsupported_explicit_422", "gemini_native": "unsupported_explicit_422", "configured_model_routing": "implemented", "ordered_or_round_robin": "implemented", "failover_connect_or_429_only": "implemented", "retry_after_stream_or_unknown": "forbidden", "automatic_host_endpoint_migration": "not_implemented"}}
 
 
@@ -502,6 +503,9 @@ def _target(provider, endpoint, payload):
         raise HTTPException(422, "Provider URL must not target a private or link-local address")
     mapped = dict(payload)
     mapped["model"] = (provider.get("model_map") or {}).get(mapped["model"], mapped["model"])
+    for identifier in (payload["model"], mapped["model"]):
+        if not isinstance(identifier, str) or not identifier.strip() or len(identifier) > 256 or any(ord(c) < 32 for c in identifier):
+            raise HTTPException(422, "A short model identifier without control characters is required")
     secret = provider.get("api_key")
     if isinstance(secret, str) and secret and any(secret in str(value) for value in (payload.get("model"), mapped["model"])):
         raise HTTPException(422, "Selected model contains unsafe provider metadata")
@@ -533,6 +537,8 @@ class StreamMeter:
         self.first = self.last = None
         self.content_chunks = 0
         self.done = False
+        self.completed_response = False
+        self.reported_failure = False
         self.usage_final = False
         self.invalid = False
         self.upstream_id = None
@@ -604,10 +610,19 @@ class StreamMeter:
             # Anthropic supplies input at message_start and output at message_delta.
             self.usage.update(usage)
         kind = value.get("type", "")
-        if kind in {"response.completed", "message_stop"}:
+        finish_choice = self.protocol == "openai" and any(
+            c.get("finish_reason") in ("stop", "length", "tool_calls", "function_call", "content_filter")
+            for c in value.get("choices") or []
+        )
+        if ((self.protocol == "openai" and kind == "response.completed" and response.get("status") in (None, "completed"))
+                or (self.protocol == "anthropic" and kind == "message_stop")):
             self.done = True
-        if kind in {"response.failed", "response.incomplete", "error"} or value.get("status") in {"failed", "incomplete", "cancelled"}:
+            self.completed_response = True
+        elif finish_choice:
+            self.completed_response = True
+        if value.get("error") or kind in {"response.failed", "response.incomplete", "error"} or value.get("status") in {"failed", "incomplete", "cancelled"}:
             self.invalid = True
+            self.reported_failure = True
         if kind in {"response.output_text.delta", "response.function_call_arguments.delta"} and value.get("delta"):
             self._content()
         elif kind == "content_block_delta":
@@ -623,24 +638,32 @@ class StreamMeter:
                     self._content()
                     break
         if isinstance(usage, dict):
-            if self.protocol == "anthropic" and kind == "message_delta" and usage.get("output_tokens") is not None:
-                self.usage_final = self.usage.get("input_tokens") is not None
-            elif self.protocol == "openai" and (kind == "response.completed" or value.get("choices") == [] or any(c.get("finish_reason") for c in value.get("choices") or [])):
-                self.usage_final = (self.usage.get("prompt_tokens", self.usage.get("input_tokens")) is not None and self.usage.get("completion_tokens", self.usage.get("output_tokens")) is not None)
+            if self.protocol == "anthropic" and kind == "message_delta":
+                self.usage_final = usage.get("output_tokens") is not None
+            elif self.protocol == "openai" and (kind == "response.completed" or value.get("choices") == [] or finish_choice):
+                self.usage_final = usage.get("completion_tokens", usage.get("output_tokens")) is not None
+
+    def finish_stream_usage(self):
+        # Initial/heartbeat output counts can predate later content. Preserve
+        # observed input, but never treat interim output as final billing data.
+        if not self.usage_final:
+            for field in ("output_tokens", "completion_tokens", "reasoning_tokens",
+                          "output_tokens_details", "completion_tokens_details"):
+                self.usage.pop(field, None)
 
 
-def _receipt(aid, rid, provider_id, model, protocol, started, *, status, phase, requested_model=None, meter=None, ended=None, error=None, host_id=None):
+def _receipt(aid, rid, provider_id, model, protocol, started, *, status, phase, requested_model=None, meter=None, ended=None, error=None, host_id=None, snapshot=None):
     item = {"origin": "proxy", "observation_id": f"{aid}:{phase}", "attempt_id": aid,
             "logical_request_id": rid, "provider_id": provider_id, "model": model,
             "billing_model": meter.model if meter and meter.model else model,
-            "requested_model": requested_model or model, "actual_model": meter.model if meter and meter.model else model,
+            "requested_model": requested_model or model, "actual_model": meter.model if meter else None,
             "protocol": protocol, "host_id": host_id, "started_at": started, "ended_at": ended,
-            "status": status, "error_code": error, "raw_usage": meter.usage if meter else {}}
+            "status": status, "error_code": error, "raw_usage": meter.usage if meter else {}, **(snapshot or {})}
     if meter:
         item.update(first_content_at=meter.first, last_content_at=meter.last, content_chunks=meter.content_chunks,
                     upstream_request_id=meter.upstream_id)
     try:
-        usage_service.ingest([item])
+        usage_service.ingest([item], local_gateway=True)
     except HTTPException as exc:
         if exc.status_code != 422 or not meter:
             raise
@@ -648,7 +671,7 @@ def _receipt(aid, rid, provider_id, model, protocol, started, *, status, phase, 
         item["raw_usage"] = {}
         item["status"] = "unknown"
         item["error_code"] = "invalid_upstream_usage"
-        usage_service.ingest([item])
+        usage_service.ingest([item], local_gateway=True)
 
 
 async def _read_body(request):
@@ -667,20 +690,63 @@ async def _read_body(request):
     return body
 
 
-def circuit_status(scope=None):
-    circuits = get_app_setting("routing_v2_circuits" + (":" + scope if scope else ""), {}) or {}
+def _circuit_key(scope):
+    return "routing_v2_circuits" + (":" + scope if scope else "")
+
+
+def circuit_status(scope=None, *, version=None, conn=None):
+    circuits = get_app_setting(_circuit_key(scope), {}, conn=conn) or {}
     now = time.time()
-    return {pid: {**state, "state": "open" if state.get("open_until", 0) > now else "half_open" if state.get("open_until") else "closed"} for pid, state in circuits.items()}
+    result = {}
+    for pid, circuit in circuits.items():
+        if version is not None and circuit.get("route_version") not in (None, version):
+            continue
+        state = "closed"
+        if circuit.get("open_until", 0) > now:
+            state = "open"
+        elif circuit.get("open_until"):
+            state = "probing" if circuit.get("probe_id") in _active or circuit.get("probe_until", 0) > now else "half_open"
+        result[pid] = {k: v for k, v in circuit.items() if k != "probe_id"}
+        result[pid].update(state=state, probe_source="next_user_request" if state in ("open", "half_open", "probing") else None)
+    return result
 
 
-def _circuit_result(provider_id, success, config):
+def _claim_circuit(provider_id, config, attempt_id):
+    """Only one live user request may probe an expired open circuit."""
+    key = _circuit_key(config.get("_scope"))
+    now = time.time()
     with db() as conn:
         conn.execute("BEGIN IMMEDIATE")
-        key = "routing_v2_circuits" + (":" + config["_scope"] if config.get("_scope") else "")
+        states = get_app_setting(key, {}, conn=conn) or {}
+        state = states.get(provider_id, {})
+        if not state.get("open_until") or state.get("route_version") not in (None, config["version"]):
+            return True
+        if state.get("probe_id") in _active or max(state["open_until"], state.get("probe_until", 0)) > now:
+            return False
+        state.update(probe_id=attempt_id, probe_until=now + config["request_timeout_seconds"])
+        set_app_setting(key, states, conn=conn)
+        return True
+
+
+def _circuit_result(provider_id, success, config, attempt_id):
+    with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        key = _circuit_key(config.get("_scope"))
         states = get_app_setting(key, {}, conn=conn) or {}
         old = states.get(provider_id, {})
+        if old.get("route_version", 0) > config["version"]:
+            return
+        if old.get("route_version") not in (None, config["version"]):
+            old = {}
+        if old.get("probe_id") and old["probe_id"] != attempt_id:
+            return
+        if success is None:
+            if old.get("probe_id") == attempt_id:
+                states[provider_id] = {k: v for k, v in old.items() if k not in ("probe_id", "probe_until")}
+                set_app_setting(key, states, conn=conn)
+            return
         failures = 0 if success else old.get("failure_count", 0) + 1
-        states[provider_id] = {"failure_count": failures, "open_until": time.time() + config["circuit_cooldown_seconds"] if failures >= config["circuit_threshold"] else 0, "updated_at": now_iso()}
+        states[provider_id] = {"failure_count": failures, "open_until": time.time() + config["circuit_cooldown_seconds"] if failures >= config["circuit_threshold"] else 0, "updated_at": now_iso(), "route_version": config["version"]}
         set_app_setting(key, states, conn=conn)
 
 
@@ -695,8 +761,8 @@ def _candidates(config, model):
             cursors[model] = (index + 1) % len(ids)
             set_app_setting("routing_v2_round_robin", cursors, conn=conn)
         ids = ids[index:] + ids[:index]
-    circuits = circuit_status(config.get("_scope"))
-    ids = [pid for pid in ids if circuits.get(pid, {}).get("state") != "open"]
+    circuits = circuit_status(config.get("_scope"), version=config["version"])
+    ids = [pid for pid in ids if circuits.get(pid, {}).get("state") not in ("open", "probing")]
     if not ids:
         raise HTTPException(503, "All configured providers have open circuits")
     return ids
@@ -736,8 +802,6 @@ async def forward(request: Request, endpoint: str, host_id=None):
             config = HostRouting.dispatch(profile, payload.get('model'))
         except ConfigurationError as exc:
             raise HTTPException(exc.status_code, str(exc)) from None
-    def receipt(*args, **kwargs):
-        return _receipt(*args, **kwargs, host_id=host_id)
     if not isinstance(payload.get("model"), str):
         raise HTTPException(422, "A model is required")
     configured_ids = config['model_routes'].get(payload['model']) or [config['provider_id'], *config['fallback_provider_ids']]
@@ -760,17 +824,37 @@ async def forward(request: Request, endpoint: str, host_id=None):
         if profile:
             if provider.get('version') != profile['entity_versions'].get(pid):
                 raise HTTPException(409, 'Route definition changed during dispatch; request was not sent')
+            account_id = provider.get("resolved_account_id")
+            if account_id and provider.get("resolved_account_version") != profile["entity_versions"].get(account_id):
+                raise HTTPException(409, "Route account changed during dispatch; request was not sent")
             provider = {**provider, 'model_map': {}}
             outgoing_payload = {**payload, 'model': config['_models'][pid]}
         url, headers, outgoing, protocol = _target(provider, endpoint, outgoing_payload)
         if protocol == "anthropic" and request.headers.get("anthropic-beta"):
             headers["anthropic-beta"] = request.headers["anthropic-beta"]
-        targets.append((pid, url, headers, outgoing, protocol, provider.get("api_key")))
-    if len({entry[-2] for entry in targets}) != 1:
+        account_id = provider.get("resolved_account_id")
+        key = provider.get("api_key")
+        snapshot = {"credential_source": provider.get("credential_source") or "provider",
+                    "account_id": account_id, "connection_mode": profile["mode"] if profile else "routing",
+                    "route_version": config["version"]}
+        for field, label in (("provider_name", provider.get("name")), ("account_name", provider.get("resolved_account_name"))):
+            if isinstance(label, str) and len(label) <= 256 and all(ord(c) >= 32 for c in label) and (not key or key not in label):
+                snapshot[field] = label
+        targets.append((pid, url, headers, outgoing, protocol, key, snapshot))
+    if len({entry[4] for entry in targets}) != 1:
         raise HTTPException(422, "Fallback providers must use the same native protocol")
     rid = new_id("request")
-    for index, (pid, url, headers, outgoing, protocol, provider_secret) in enumerate(targets):
+    attempt_number = 0
+    for index, (pid, url, headers, outgoing, protocol, provider_secret, snapshot) in enumerate(targets):
         aid, started = new_id("attempt"), now_iso()
+        if not _claim_circuit(pid, config, aid):
+            continue
+        attempt_number += 1
+        snapshot["attempt_number"] = attempt_number
+
+        def receipt(*args, **kwargs):
+            return _receipt(*args, **kwargs, host_id=host_id, snapshot=snapshot)
+
         receipt(aid, rid, pid, outgoing["model"], protocol, started, requested_model=payload["model"], status="running", phase="start")
         meter = StreamMeter(protocol, endpoint, secret=provider_secret)
         converting = (endpoint == "messages" and protocol == "openai") or (endpoint == "chat/completions" and protocol == "anthropic")
@@ -785,7 +869,7 @@ async def forward(request: Request, endpoint: str, host_id=None):
             except (httpx.ConnectError, httpx.ConnectTimeout):
                 # A connection was never established: no request body was sent.
                 receipt(aid, rid, pid, outgoing["model"], protocol, started, requested_model=payload["model"], status="failed", phase="finish", meter=meter, ended=now_iso(), error="connection_not_established")
-                _circuit_result(pid, False, config)
+                _circuit_result(pid, False, config, aid)
                 await client.aclose()
                 _active.discard(aid)
                 if more:
@@ -793,8 +877,11 @@ async def forward(request: Request, endpoint: str, host_id=None):
                 raise HTTPException(502, "Configured providers could not be connected; no automatic replay occurred after transmission") from None
             if upstream.status_code >= 300:
                 receipt(aid, rid, pid, outgoing["model"], protocol, started, requested_model=payload["model"], status="failed", phase="finish", meter=meter, ended=now_iso(), error=f"upstream_http_{upstream.status_code}")
-                _circuit_result(pid, False, config)
                 code = upstream.status_code
+                # Invalid individual inputs must not disable a provider for
+                # everyone else. Record their outcome without penalizing health.
+                affects_route = code >= 500 or code in (401, 403, 404, 408, 429)
+                _circuit_result(pid, False if affects_route else None, config, aid)
                 await upstream.aclose()
                 await client.aclose()
                 _active.discard(aid)
@@ -802,7 +889,7 @@ async def forward(request: Request, endpoint: str, host_id=None):
                 # 5xx/read/write timeouts could follow side effects: never replay.
                 if code == 429 and more:
                     continue
-                return Response(content=json.dumps({"error": {"type": "upstream_error", "message": "Upstream rejected this request", "status": code, "attempt_id": aid}}), status_code=code, media_type="application/json")
+                return Response(content=json.dumps({"error": {"type": "upstream_error", "message": "Upstream rejected this request", "status": code, "attempt_id": aid}}), status_code=code, media_type="application/json", headers={"x-senrelay-request-id": rid, "x-senrelay-attempt-id": aid})
             if outgoing.get("stream"):
                 if "text/event-stream" not in upstream.headers.get("content-type", ""):
                     raise ValueError("unexpected_stream_content_type")
@@ -833,8 +920,13 @@ async def forward(request: Request, endpoint: str, host_id=None):
                             if len(pending_frame) > MAX_EVENT:
                                 raise ValueError("oversize_sse_event")
                         else:
-                            state = "succeeded" if meter.done and meter.usage_final and not meter.invalid and not meter.buffer.strip() and not pending_frame.strip() and (not converter or converter.done) else "unknown"
-                            error = None if state == "succeeded" else "incomplete_stream"
+                            framed = meter.done and not meter.invalid and not meter.buffer.strip() and not pending_frame.strip() and (not converter or converter.done)
+                            if meter.reported_failure:
+                                state, error = "failed", "upstream_reported_failure"
+                            elif framed and (meter.completed_response or meter.usage_final):
+                                state = "succeeded"
+                            else:
+                                error = "incomplete_stream"
                     except (asyncio.CancelledError, GeneratorExit):
                         state, error = "cancelled", "client_disconnected"
                         raise
@@ -842,14 +934,14 @@ async def forward(request: Request, endpoint: str, host_id=None):
                         state, error = "unknown", "upstream_stream_interrupted"
                     finally:
                         try:
+                            meter.finish_stream_usage()
                             receipt(aid, rid, pid, outgoing["model"], protocol, started, requested_model=payload["model"], status=state, phase="finish", meter=meter, ended=now_iso(), error=error)
-                            if state != "cancelled":
-                                _circuit_result(pid, state == "succeeded", config)
+                            _circuit_result(pid, None if state == "cancelled" else state == "succeeded", config, aid)
                         finally:
                             await upstream.aclose()
                             await client.aclose()
                             _active.discard(aid)
-                return StreamingResponse(body(), media_type="text/event-stream", headers={"x-senrelay-attempt-id": aid, "cache-control": "no-store"})
+                return StreamingResponse(body(), media_type="text/event-stream", headers={"x-senrelay-request-id": rid, "x-senrelay-attempt-id": aid, "cache-control": "no-store"})
             chunks, size = [], 0
             async for chunk in upstream.aiter_bytes():
                 if await request.is_disconnected():
@@ -866,15 +958,23 @@ async def forward(request: Request, endpoint: str, host_id=None):
                     raw = json.dumps(_convert_reply(parsed, protocol), ensure_ascii=False).encode()
             except (ValueError, TypeError, AttributeError, KeyError, HTTPException):
                 raise ValueError("invalid_upstream_json") from None
-            final_status = "failed" if meter.invalid else "succeeded"
-            receipt(aid, rid, pid, outgoing["model"], protocol, started, requested_model=payload["model"], status=final_status, phase="finish", meter=meter, ended=now_iso())
-            _circuit_result(pid, final_status == "succeeded", config)
+            if protocol == "anthropic":
+                has_response = isinstance(parsed.get("content"), list)
+            elif endpoint == "responses":
+                has_response = isinstance(parsed.get("output"), list) and parsed.get("status") in (None, "completed")
+            else:
+                has_response = any(isinstance(choice, dict) and isinstance(choice.get("message"), dict) for choice in parsed.get("choices") or [])
+            final_status = "failed" if meter.invalid else "succeeded" if has_response else "unknown"
+            error = "upstream_reported_failure" if meter.invalid else None if has_response else "incomplete_upstream_response"
+            receipt(aid, rid, pid, outgoing["model"], protocol, started, requested_model=payload["model"], status=final_status, phase="finish", meter=meter, ended=now_iso(), error=error)
+            _circuit_result(pid, None if final_status == "unknown" else final_status == "succeeded", config, aid)
             await upstream.aclose()
             await client.aclose()
             _active.discard(aid)
-            return Response(raw, media_type="application/json", headers={"x-senrelay-attempt-id": aid, "cache-control": "no-store"})
+            return Response(raw, media_type="application/json", headers={"x-senrelay-request-id": rid, "x-senrelay-attempt-id": aid, "cache-control": "no-store"})
         except asyncio.CancelledError:
             receipt(aid, rid, pid, outgoing["model"], protocol, started, requested_model=payload["model"], status="cancelled", phase="finish", meter=meter, ended=now_iso(), error="client_disconnected")
+            _circuit_result(pid, None, config, aid)
             if upstream:
                 await upstream.aclose()
             await client.aclose()
@@ -882,21 +982,24 @@ async def forward(request: Request, endpoint: str, host_id=None):
             raise
         except (httpx.HTTPError, ValueError, OSError):
             receipt(aid, rid, pid, outgoing["model"], protocol, started, requested_model=payload["model"], status="unknown", phase="finish", meter=meter, ended=now_iso(), error="upstream_outcome_unknown")
-            _circuit_result(pid, False, config)
+            _circuit_result(pid, False, config, aid)
             if upstream:
                 await upstream.aclose()
             await client.aclose()
             _active.discard(aid)
             raise HTTPException(502, "Upstream outcome is unknown; request was not automatically retried") from None
+    raise HTTPException(503, "No reviewed route is ready; a circuit is open or already being probed")
 
 
 def recover_interrupted_attempts():
     """Explicit startup recovery; running records are uncertain, never retried."""
     usage_service.ensure_schema()
     rows = usage_service.requests({"status": "running"}, limit=100000)["items"]
+    recovered = 0
     for row in rows:
-        if row["id"] not in _active:
+        if row["id"] not in _active and "proxy" in row.get("origins", ()):
             usage_service.ingest([{ "origin": "proxy", "observation_id": row["id"] + ":recovery", "attempt_id": row["id"],
                 "provider_id": row.get("provider_id"), "model": row.get("model"), "started_at": row["started_at"],
-                "status": "unknown", "error_code": "service_interrupted"}])
-    return len(rows)
+                "status": "unknown", "error_code": "service_interrupted"}], local_gateway=bool(row.get("gateway_outcome")))
+            recovered += 1
+    return recovered

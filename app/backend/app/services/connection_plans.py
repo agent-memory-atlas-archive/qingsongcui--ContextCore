@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import secrets
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -13,6 +14,7 @@ from app.integrations.installer import apply_host_integration, _manifest_path
 from app.integrations.constants import SUPPORTED_HOSTS
 from app.integrations.recovery import plan_recovery, read_file
 from app.integrations.secret_store import KeychainSecretStore
+from app.services.host_config_roots import require_integration_root
 from app.services.host_registry import discover_hosts, HOST_DEFINITIONS
 
 CAPABILITIES = {'context_tools': 'mcp', 'continuation': 'skill', 'lifecycle': 'hooks'}
@@ -33,6 +35,9 @@ class ConnectionPlans:
         self.isolated = home is not None
         self.transactions = ConfigurationTransactions(settings.db_path, settings.db_path.parent/'configuration-snapshots',
                                                        [self.home], KeychainSecretStore())
+
+    def check_root(self, host, surface):
+        require_integration_root(host, surface, self.home, {} if self.isolated else os.environ)
 
     def _state(self, host, conn=None):
         if conn is None:
@@ -104,6 +109,7 @@ class ConnectionPlans:
             raise ConfigurationError('Explicit distinct connection capabilities are required', 422)
         if surface not in HOST_DEFINITIONS[host].surfaces:
             raise ConfigurationError('Select the target host entry', 422)
+        self.check_root(host, surface)
         components = [CAPABILITIES[c] for c in capabilities]
         from app.services.connection_service import resolve_trusted_base_url
         base_url = resolve_trusted_base_url(base_url)
@@ -139,6 +145,7 @@ class ConnectionPlans:
         with configuration_lock:
             plan = self.get(host, plan_id)
             meta = plan['payload']['metadata']
+            self.check_root(host, meta['surface'])
             if plan['status'] != 'applied':
                 if datetime.now(timezone.utc) >= datetime.fromisoformat(meta['expires_at']):
                     raise ConfigurationError('Plan expired; create a new preview')
@@ -172,7 +179,8 @@ class ConnectionPlans:
             return result
 
     def recover(self, host, plan_id, confirmed):
-        self.get(host, plan_id)
+        plan = self.get(host, plan_id)
+        self.check_root(host, plan['payload']['metadata'].get('surface'))
         return self.transactions.recover(plan_id, confirmed)
 
 

@@ -26,7 +26,7 @@ def public_plan(plan):
     result = {**plan, "payload": {**plan["payload"], "files": []}}
     result['payload']['metadata'] = {key: value for key, value in plan['payload'].get('metadata', {}).items() if key != 'host_routing'}
     for item in plan["payload"]["files"]:
-        result["payload"]["files"].append({key: value for key, value in item.items() if key not in ("specs", "snapshot", "changes")})
+        result["payload"]["files"].append({key: value for key, value in item.items() if key not in ("specs", "snapshot", "changes", "undo_changes", "undo_registry")})
     return result
 
 
@@ -125,7 +125,7 @@ def quick_switch_provider(host_id: str, body: dict = Body(...)):
         host_id,
         body.get("provider_id"),
         body.get("model_id"),
-        auto_apply=bool(body.get("auto_apply", False)),
+        auto_apply=body.get("auto_apply") is True,
     )
     if isinstance(result, dict) and isinstance(result.get("plan"), dict):
         result = {**result, "plan": public_plan(result["plan"])}
@@ -139,7 +139,7 @@ def quick_toggle_asset(host_id: str, body: dict = Body(...)):
         host_id,
         body.get("asset_id"),
         body.get("enabled", True),
-        auto_apply=bool(body.get("auto_apply", False)),
+        auto_apply=body.get("auto_apply") is True,
     )
     if isinstance(result, dict) and isinstance(result.get("plan"), dict):
         result = {**result, "plan": public_plan(result["plan"])}
@@ -155,7 +155,7 @@ def sync_to_hosts(body: dict = Body(...)):
         body.get("host_ids"),
         str(body.get("operation") or "install"),
         body.get("model_id"),
-        auto_apply=bool(body.get("auto_apply", False)),
+        auto_apply=body.get("auto_apply") is True,
     )
 
     result["results"] = {
@@ -165,10 +165,16 @@ def sync_to_hosts(body: dict = Body(...)):
     return result
 
 
-@router.post("/sync-local")
-def sync_local_environment():
-    return invoke(management.service().sync_local_environment)
+@router.post("/hosts/{host_id}/native/preview")
+def preview_native(host_id: str, body: dict = Body(...)):
+    from app.services import native_catalog
+    return invoke(native_catalog.preview, management.service(), host_id, body.get("kind"))
 
+
+@router.post("/hosts/{host_id}/native/import")
+def import_native(host_id: str, body: dict = Body(...)):
+    from app.services import native_catalog
+    return invoke(native_catalog.import_selection, management.service(), host_id, body)
 
 
 def register_crud(path: str, kind: str):
@@ -320,3 +326,46 @@ def apply_plan(plan_id: str, body: dict = Body(...)):
 @router.post("/plans/{plan_id}/recover")
 def recover_plan(plan_id: str, body: dict = Body(...)):
     return public_plan(invoke(management.service().recover_plan, plan_id, body.get("confirmed") is True))
+
+
+@router.post('/configuration-backup/preview')
+def preview_configuration_backup(body: dict = Body(...)):
+    from app.services.configuration_backup import restore
+    return invoke(restore, management.service(), body.get('data'), body.get('replace_existing', False))
+
+
+@router.post('/configuration-backup/restore')
+def restore_configuration_backup(body: dict = Body(...)):
+    from app.services.configuration_backup import restore
+    if not body.get('preview_id') or body.get('confirmed') is not True:
+        raise HTTPException(422, 'Confirm the reviewed backup first')
+    return invoke(restore, management.service(), body.get('data'), body.get('replace_existing', False), body['preview_id'], True)
+
+
+@router.get('/shared-resource-matrix')
+def shared_resource_matrix(host_ids: str = Query(..., max_length=200), kind: str = 'mcp',
+                           q: str = Query('', max_length=200), offset: int = Query(0, ge=0)):
+    hosts = list(dict.fromkeys(host_ids.split(',')))
+    if not 1 <= len(hosts) <= 3 or any(key not in management.HOSTS for key in hosts):
+        raise HTTPException(422, 'Select one to three known assistants')
+    manager = management.service()
+    page = invoke(manager.catalog_page, 'asset', scope='all', resource_kind=kind, query=q, offset=offset, limit=15)
+    if page['items']:
+        for host in hosts:
+            if manager.host_config(host, display=True).get('config_root', {}).get('status') == 'blocked':
+                for row in page['items']:
+                    row.setdefault('cells', {})[host] = {'status': 'not_checked'}
+                continue
+            state = invoke(manager.host_state, host)
+            default = 'not_managed' if state['coverage'] == 'complete_owned_entries' else 'not_checked'
+            for row in page['items']:
+                receipt = state['resources'].get(row['id'], {})
+                row.setdefault('cells', {})[host] = {key: receipt[key] for key in ('applied_version', 'updated_at') if key in receipt}
+                row['cells'][host]['status'] = receipt.get('status', default)
+    return page
+
+
+@router.post("/plans/{plan_id}/undo/preview")
+def preview_undo(plan_id: str):
+    from app.services import management_undo
+    return public_plan(invoke(management_undo.preview, management.service(), plan_id))

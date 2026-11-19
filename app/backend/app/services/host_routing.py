@@ -81,6 +81,9 @@ class HostRouting:
         result['gateway_url'] = value.get('gateway', {}).get('base_url')
         result['pending'] = None
         with self.manager.connect() as conn:
+            result["diagnostics"] = self._diagnostics(conn, value)
+            if result["diagnostics"]["last_success"]:
+                result["real_request"] = "observed_successful_gateway_request"
             if value.get('pending'):
                 pending = value['pending']
                 plan = conn.execute('SELECT status FROM management_plans WHERE id=?', (pending['plan_id'],)).fetchone()
@@ -93,6 +96,34 @@ class HostRouting:
         result['definition_state'] = 'update_available' if stale else 'current'
         result['state'] = 'recovery_required' if result['pending'] else 'applied' if value.get('last_plan_id') else 'not_configured'
         result['changed_definition_count'] = len(stale)
+        return result
+
+    @staticmethod
+    def _diagnostics(conn, profile):
+        """Describe only local gateway receipts for this exact applied revision."""
+        result = {"last_success": None, "last_failure": None, "circuits": {}}
+        if profile["mode"] == "direct":
+            return result
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('app_settings','usage_v2_attempts')")}
+        if "app_settings" in tables:
+            from app.services.routing_service import circuit_status
+            result["circuits"] = circuit_status(profile["host_id"], version=profile["version"], conn=conn)
+        if "usage_v2_attempts" not in tables:
+            return result
+        fields = ("logical_request_id", "provider_id", "provider_name", "model", "actual_model", "account_id", "account_name",
+                  "route_version", "started_at", "ended_at", "attempt_number", "error_code", "connection_mode")
+        latest = {}
+        for status in ("succeeded", "failed", "unknown"):
+            row = conn.execute("""SELECT data,COALESCE(json_extract(data,'$.ended_at'),started_at) observed_at
+                                  FROM usage_v2_attempts WHERE host_id=? AND json_extract(data,'$.route_version')=?
+                                  AND json_extract(data,'$.gateway_outcome')=? ORDER BY observed_at DESC,id DESC LIMIT 1""",
+                               (profile["host_id"], profile["version"], status)).fetchone()
+            label = "last_success" if status == "succeeded" else "last_failure"
+            if row and row["observed_at"] > latest.get(label, ""):
+                latest[label] = row["observed_at"]
+                data = json.loads(row["data"])
+                result[label] = {key: data.get(key) for key in fields}
+                result[label]["status"] = status
         return result
 
     def _entry(self, entry, endpoint, versions):
@@ -108,8 +139,11 @@ class HostRouting:
         require_endpoint(provider, endpoint)
         versions[provider['id']], versions[model['id']] = provider['version'], model['version']
         from app.services.provider_credentials import binding
-        versions.update(binding(self.manager, provider)['dependencies'])
-        return {'provider_id': provider['id'], 'provider_name': provider['name'], 'model_id': model['id'], 'model_name': model['name'], 'native_model': model['model_id'], 'context_window': model.get('context_window')}
+        credential = binding(self.manager, provider)
+        versions.update(credential["dependencies"])
+        account = credential.get("account") or {}
+        return {'provider_id': provider['id'], 'provider_name': provider['name'], 'model_id': model['id'], 'model_name': model['name'], 'native_model': model['model_id'], 'context_window': model.get('context_window'),
+                'credential_source': credential['source'], 'account_id': account.get('id'), 'account_name': account.get('name')}
 
     def _target(self, host_id, body, current, origin):
         allowed = {'expected_version', 'mode', 'endpoint', 'target', 'fallbacks', 'members', 'default_alias', *NUMERIC}
@@ -204,8 +238,7 @@ class HostRouting:
             selected = request if request.get('activate_provider') is True else {'host_id': host_id, 'provider_id': direct['provider_id'], 'model_id': direct['model_id'], 'activate_provider': True}
             specs, metadata = self.manager._configuration_specs(selected)
             if host_id != 'claude-code':
-                from app.services.management_service import HOSTS
-                specs += self.manager._provider_specs(host_id, HOSTS[host_id], current['gateway'], 'uninstall', replacing_selected=True)
+                specs += self.manager._provider_specs(host_id, self.manager.host_config(host_id), current['gateway'], 'uninstall', replacing_selected=True)
             plan = self.manager.transactions.create(specs, metadata)
         target = {'host_id': host_id, 'mode': 'direct', 'direct': {'provider_id': metadata.get('provider_id'), 'model_id': metadata.get('model_id')}, 'entity_versions': {}, 'credential_hash': None}
         metadata['host_routing'] = {'expected_version': current['version'], 'target': target}
@@ -338,7 +371,7 @@ class HostRouting:
             if not entries:
                 raise ConfigurationError('Unknown aggregation model alias', 422)
         ids = [entry['provider_id'] for entry in entries]
-        return {'enabled': True, 'provider_id': ids[0], 'fallback_provider_ids': ids[1:], 'model_routes': {}, 'routing_strategy': 'ordered', '_scope': value['host_id'], '_models': {entry['provider_id']: entry['native_model'] for entry in entries}, **{key: value[key] for key in NUMERIC}}
+        return {'enabled': True, 'provider_id': ids[0], 'fallback_provider_ids': ids[1:], 'model_routes': {}, 'routing_strategy': 'ordered', '_scope': value['host_id'], 'version': value['version'], '_models': {entry['provider_id']: entry['native_model'] for entry in entries}, **{key: value[key] for key in NUMERIC}}
 
     @staticmethod
     def assert_not_referenced(conn, entity_id):

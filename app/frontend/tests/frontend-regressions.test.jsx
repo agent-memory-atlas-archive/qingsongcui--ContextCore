@@ -13,6 +13,7 @@ import { ProjectDialog } from '../src/components/ProjectDialog.jsx';
 import { AccountOperation } from '../src/components/agent-management/AccountOperation.jsx';
 import { Shell } from '../src/components/Shell.jsx';
 import { UsagePage } from '../src/pages/UsagePage.jsx';
+import { usageParams, usagePath } from '../src/lib/usageView.js';
 import { Markdown, MARKDOWN_LIMIT } from '../src/components/Markdown.jsx';
 import { eventAffectsObject } from '../src/lib/objectRefresh.js';
 import { setLang } from '../src/lib/i18n.jsx';
@@ -170,21 +171,18 @@ describe('actual consumer controls with synthetic API responses', () => {
     expect(field('标题').value).toBe('My draft'); expect(button('看看最新版本')).toBeTruthy();
   });
   it('does not present wholly missing observed token usage or unpriced cost as zero', async () => {
-    const tz = new URLSearchParams({ tz: Intl.DateTimeFormat().resolvedOptions().timeZone });
-    h.data[`/api/usage/summary?${tz}`] = { logical_requests: 1, attempts: 1, known_tokens: 0, unknown_usage_count: 1, unknown_cost_count: 1, cost_by_currency: {}, heatmap: [] };
-    h.data['/api/usage/requests?limit=25&offset=0'] = { items: [
-      { host_id: 'codex', actual_model: 'missing-model', usage: {} },
-      { host_id: 'omp', actual_model: 'known-model', usage: { input_tokens: 0, output_tokens: 0 } },
+    const params = usageParams({ period: 'week' });
+    h.data[usagePath('overview', params)] = { logical_requests: 1, attempts: 1, known_tokens: 0, known_token_attempts: 0, unknown_usage_count: 1, unknown_cost_count: 1, cost_by_currency: {}, heatmap: [] };
+    h.data[usagePath('breakdown', params, {dimension:'provider_id'})] = { items: [
+      { value: 'provider-a', label: 'Provider A', attempts: 1, logical_requests: 1, known_tokens: 0, known_token_attempts: 0, cost_by_currency: {} },
+      { value: 'provider-b', label: 'Provider B', attempts: 1, logical_requests: 1, known_tokens: 0, known_token_attempts: 1, cost_by_currency: {USD:'0'} },
     ] };
     await render(<UsagePage projects={props.projects} />);
     expect(Array.from(container.querySelectorAll('.metric-card strong')).map(node => node.textContent)).toEqual(['1', '未知', '未知']);
-    const tables = container.querySelectorAll('table');
-    expect(tables[0].textContent).toContain('codex');
-    expect(tables[0].textContent).toContain('未知');
-    expect(tables[0].textContent).toContain('omp');
-    expect(tables[1].textContent).toContain('missing-model');
-    expect(tables[1].textContent).toContain('未知');
-    expect(tables[1].textContent).toContain('known-model');
+    const rows = container.querySelectorAll('.usage-group-table tbody tr');
+    expect(rows[0].cells[2].textContent).toBe('未知');
+    expect(rows[1].cells[2].textContent).toBe('0');
+    expect(rows[1].cells[3].textContent).toBe('USD 0');
   });
   it('restores navigation interactivity after mobile drawer close and resize to desktop', async () => {
     mobile = true; await render(<Shell lang="zh" page="projects" navigate={vi.fn()} projects={[]} status={null} managementState="ready"><input aria-label="work" /></Shell>);
@@ -235,7 +233,7 @@ describe('object refresh boundaries', () => {
 
 describe('consumer frontend regression tests for audit findings', () => {
   it('evaluates backendCompatibility according to contract', () => {
-    const readyData = { capabilities: { mcp: true }, counts: { agents: 1 } };
+    const readyData = { capabilities: { independent_workbench: true }, counts: { agents: 1 } };
     expect(backendCompatibility({ data: readyData, loading: false, error: null })).toBe('ready');
     expect(backendCompatibility({ data: readyData, error: { status: 404 } })).toBe('upgrade_required');
     expect(backendCompatibility({ data: readyData, error: { status: 0 } })).toBe('unavailable');
@@ -646,7 +644,7 @@ it('keeps ComputeSettings removed while supporting database backup and embedded 
   expect(container.querySelector('.embedded-audit')).toBeTruthy();
 });
 
-it('keeps Shell aria-current aligned, deduplicates UsagePage host options, and hides cc-switch in ImportDialog preview', async () => {
+it('keeps Shell aria-current aligned, deduplicates UsagePage host options, and limits configuration restore to Senrelay definitions', async () => {
   // 1. Shell aria-current matches active class when viewing connections while managementState is ready
   await render(<Shell lang="zh" page="connections" navigate={vi.fn()} projects={[]} status={null} managementState="ready"><div /></Shell>);
   const agentsNavBtn = Array.from(container.querySelectorAll('.main-nav button')).find(btn => btn.textContent.includes('Agent 管理'));
@@ -669,17 +667,18 @@ it('keeps Shell aria-current aligned, deduplicates UsagePage host options, and h
   expect(optionValues).toEqual(['', 'codex', 'antigravity', 'claude_code']);
   expect(hostSelect.textContent).toContain('Codex CLI / Codex Desktop');
 
-  // 3. ImportDialog keeps wire format="cc-switch" for backend while sanitizing visible DOM preview
+  // Config restores accept the portable Senrelay format.
   await render(<ImportDialog agent="Codex" category="providers" onClose={vi.fn()} onChanged={vi.fn()} />);
-  await change(field('来源类型'), 'cc-switch');
-  await change(container.querySelector('textarea'), JSON.stringify({ mcpServers: { demo: { command: 'npx' } } }));
+  expect([...field('来源类型').options].map(item => item.value)).not.toContain('cc-switch');
+  await change(field('来源类型'), 'senrelay');
+  await change(container.querySelector('textarea'), JSON.stringify({ format: 'senrelay-management-v1', assets: [] }));
   await submit();
   expect(container.textContent).toContain('将保存到共享资料库');
   expect(container.textContent).not.toContain('cc-switch');
   h.mutate.mockResolvedValueOnce({ status: 'configured', imported: [{ id: 'mcp_1', name: 'demo', kind: 'mcp', version: 1 }] });
   await submit();
   expect(h.mutate).toHaveBeenCalledWith('/api/manage/assets/import', 'POST', expect.objectContaining({
-    format: 'cc-switch',
+    format: 'senrelay',
   }));
 });
 

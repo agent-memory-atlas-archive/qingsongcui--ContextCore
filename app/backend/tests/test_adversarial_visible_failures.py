@@ -1,55 +1,34 @@
-"""User-visible failures must not be reported as success.
-
-Covers the 2026-11-01 adversarial review: a local sync that cannot write or
-read a present source, and a conversation that stays unlinked.
-"""
-import os
+"""Native source problems and conversation linking failures must be visible."""
 from pathlib import Path
 
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
 from app.database import create_schema
-from app.integrations.config_transactions import ConfigurationError
-from app.services.management_service import ManagementService
+from app.routers import manage
 
 
-def test_empty_local_sync_is_success_only_without_failures():
+def test_foreign_config_is_ignored_and_native_source_failure_is_visible():
     create_schema()
-    result = ManagementService().sync_local_environment()
-    assert result["ok"] is True
-    assert result["failure_count"] == 0
-    assert result["failures"] == []
-
-
-def test_unreadable_cc_switch_source_is_not_a_successful_sync():
-    create_schema()
-    cc_dir = Path(os.environ["HOME"]) / ".cc-switch"
-    cc_dir.mkdir()
-    (cc_dir / "cc-switch.db").write_bytes(b"not a database")
-    result = ManagementService().sync_local_environment()
-    assert result["ok"] is False
-    assert result["failure_count"] >= 1
-    assert any(item["stage"] == "cc-switch" for item in result["failures"])
-    assert "not a database" not in str(result["failures"])
-
-
-def test_failed_skill_write_is_not_counted_as_synced(monkeypatch):
-    create_schema()
-    skill = Path(os.environ["HOME"]) / ".claude" / "skills" / "synthetic-skill"
-    skill.mkdir(parents=True)
-    (skill / "SKILL.md").write_text("# synthetic\n", encoding="utf-8")
-    manager = ManagementService()
-    original = manager.save
-
-    def fail_skill(kind, data, entity_id=None, expected_version=None):
-        if kind == "asset" and isinstance(data, dict) and data.get("kind") == "skill":
-            raise ConfigurationError("synthetic skill write failed")
-        return original(kind, data, entity_id, expected_version)
-
-    monkeypatch.setattr(manager, "save", fail_skill)
-    result = manager.sync_local_environment()
-    assert result["ok"] is False
-    assert result["skills_synced"] == 0
-    assert any(item["stage"] == "asset" and item["name"] == "synthetic-skill" for item in result["failures"])
-    assert "synthetic skill write failed" not in str(result["failures"])
+    home = Path.home()
+    foreign = home / ".cc-switch"
+    foreign.mkdir()
+    (foreign / "cc-switch.db").write_bytes(b"invalid database")
+    api = FastAPI()
+    api.include_router(manage.router)
+    with TestClient(api) as client:
+        assert client.post("/api/manage/sync-local", json={}).status_code == 404
+        assert client.get("/api/manage/migrations/sources").status_code == 404
+        url = "/api/manage/hosts/codex/native/preview"
+        empty = client.post(url, json={"kind": "providers"})
+        assert empty.status_code == 200
+        assert empty.json()["candidates"] == []
+        config = home / ".codex/config.toml"
+        config.parent.mkdir(exist_ok=True)
+        config.write_text("broken = [")
+        broken = client.post(url, json={"kind": "providers"})
+        assert broken.status_code >= 400 or broken.json()["status"] != empty.json()["status"]
+        assert config.read_text() == "broken = ["
 
 
 def test_unlinked_conversation_failure_is_visible(monkeypatch):

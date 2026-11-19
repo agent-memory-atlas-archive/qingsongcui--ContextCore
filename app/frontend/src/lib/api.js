@@ -26,6 +26,7 @@ export function errorFeedback(status, detail) {
   if (status === 502 && /^Model download interrupted/i.test(text)) return '模型下载连接中断。请检查网络后重新确认下载，词法检索仍可使用。';
   if (/^skipped_damaged:/i.test(text)) return '部分聊天来源格式无法读取，已跳过损坏文件。其余记录是当前的，不是整台助手同步失败。';
   if (/^partial_sync:/i.test(text)) return '部分聊天记录未能读取。已保存可读记录；请修复损坏来源，或等正在写入的文件稳定后再同步。';
+  if (status === 409 && /^Connection integration requires the default host configuration root/i.test(text)) return '安装或移除续境接入组件，请用默认配置目录重新启动续境与助手。已授权的记录可继续采集。';
   if (/legacy selection receipt/i.test(text)) return '旧版模型选择记录不完整，请先选择并启用当前模型，再继续管理连接。';
   if (/object is referenced|remove bindings and dependent objects/i.test(text)) return '这份资料仍被模型、账号或配置组合使用。请先修改或移除对应引用，再删除定义。';
   if (/context_window|model_context_windows|context window|model capacity/i.test(text)) return '请核对模型的上下文容量，按服务商说明填写正整数，再重新预览。';
