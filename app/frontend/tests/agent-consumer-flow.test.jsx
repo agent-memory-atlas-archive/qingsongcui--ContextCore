@@ -1042,7 +1042,7 @@ it('returns to a valid resource page after the final page is emptied by another 
 it('keeps a single primary heading when connection permissions are embedded in an assistant', async () => {
   await mount('connections');
   expect(document.querySelectorAll('h1')).toHaveLength(1);
-  expect(document.querySelector('h1').textContent).toBe('Codex CLI');
+  expect(document.querySelector('h1').textContent).toBe('Codex');
   expect(document.querySelectorAll('.page-header h2')).toHaveLength(1);
   expect(document.body.textContent).toContain('各自独立确认');
 });
@@ -1093,7 +1093,7 @@ describe('Agent management parity controls', () => {
     // 1. Top segmented host switcher bar
     const switcher = container.querySelector('.cc-top-switcher-bar');
     expect(switcher).toBeTruthy();
-    expect(switcher.textContent).toContain('Codex CLI');
+    expect(button('Codex', switcher)).toBeTruthy();
     expect(switcher.textContent).toContain('Claude Code');
     await click('Claude Code', switcher);
     expect(onAgentChange).toHaveBeenCalledWith('claude-code', 'providers');
@@ -1429,21 +1429,44 @@ it('surfaces partial failures and queues multiple conflict_preview plans in mult
 });
 
 
-it('opens the full directory, including hosts that do not have a detected installation', async () => {
-  const other = { id: 'hermes', name: 'Hermes', capabilities: { providers: true } };
-  h.data['/api/manage/hosts'] = [host, other];
+it('lists the six Agent families, including entries with no detected installation', async () => {
+  const families = ['claude-code', 'opencode', 'omp', 'cursor', 'antigravity'].map(id => ({ id }));
+  const desktop = { ...host, id: 'codex-desktop', name: 'Codex Desktop', shared_configuration: true };
+  const agy = { id: 'antigravity-cli', name: 'Antigravity CLI' };
+  h.data['/api/manage/hosts'] = [{ ...host, shared_configuration: true }, ...families, desktop, agy, { id: 'hermes', name: 'Hermes' }];
   const choose = vi.fn();
   await act(async () => root.render(<AgentManagementPage onAgentChange={choose} />));
   expect(container.querySelector('h1').textContent).toBe('Agent 管理');
-  expect(container.textContent).toContain('Hermes');
-  await change(field('查找助手', container), 'Hermes');
-  expect(container.textContent).not.toContain('Codex CLI');
+  expect([...container.querySelectorAll('.agent-choice strong')].map(item => item.textContent))
+    .toEqual(['Claude Code', 'Codex', 'OpenCode', 'Oh My Pi (OMP)', 'Cursor', 'Antigravity']);
+  await change(field('查找助手', container), 'Omp');
   await act(async () => container.querySelector('.agent-choice').click());
-  expect(choose).toHaveBeenCalledWith('hermes', 'providers');
-  await mount();
-  await act(async () => root.render(<AgentManagementPage agentId="codex" onAgentChange={choose} />));
+  expect(choose).toHaveBeenCalledWith('omp', 'providers');
+  await act(async () => root.render(<AgentManagementPage agentId="codex-desktop" onAgentChange={choose} />));
+  expect(container.querySelector('h1').textContent).toBe('Codex');
+  expect(container.querySelector('.agent-surface select')).toBeNull();
+  expect(container.querySelector('.agent-surface').textContent).toContain('共用配置');
   await click('所有助手');
   expect(choose).toHaveBeenCalledWith('', '');
+});
+
+it('uses one Antigravity tools view while keeping entry-specific rules selectable', async () => {
+  const paths = { mcp_path: '/shared/mcp.json', skill_dir: '/shared/skills' };
+  const common = { paths, capabilities: { mcp: true, prompts: true } };
+  h.data['/api/manage/hosts'] = [
+    { ...common, id: 'antigravity', name: 'Antigravity Desktop' },
+    { ...common, id: 'antigravity-cli', name: 'Antigravity CLI' },
+  ];
+  const choose = vi.fn();
+  await act(async () => root.render(<AgentManagementPage agentId="antigravity-cli" section="mcp" onAgentChange={choose} />));
+  expect(container.querySelector('h1').textContent).toBe('Antigravity');
+  expect(container.querySelector('.agent-surface select')).toBeNull();
+  expect(container.querySelector('.agent-surface').textContent).toContain('共用此处的配置');
+  await act(async () => root.render(<AgentManagementPage agentId="antigravity-cli" section="prompt" onAgentChange={choose} />));
+  const select = field('配置入口', container);
+  expect(select.value).toBe('antigravity-cli');
+  await change(select, 'antigravity');
+  expect(choose).toHaveBeenCalledWith('antigravity', 'prompt');
 });
 
 it('reads only the chosen native source, requires an explicit selection, and invalidates a changed source', async () => {

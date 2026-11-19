@@ -96,6 +96,19 @@ def resolve(manager, host_id, definition, env, *, display=False):
     return result
 
 
+def shared_membership(manager, host_id, kind, resource_kind=None):
+    """Definitions assigned through either entry belong to their shared configuration."""
+    if kind in ("provider", "account", "asset") and host_id in ("codex", "codex-desktop"):
+        if manager.host_config(host_id, display=True)["shared_configuration"]:
+            return ("codex", "codex-desktop")
+    if kind == "asset" and host_id in ("antigravity", "antigravity-cli"):
+        field = {"mcp": "mcp_path", "skill": "skill_dir"}.get(resource_kind)
+        if field and (manager.host_config("antigravity").get(field)
+                      == manager.host_config("antigravity-cli").get(field)):
+            return ("antigravity", "antigravity-cli")
+    return (host_id,)
+
+
 def check_plan(manager, plan):
     meta = plan['payload']['metadata']
     if meta.get('namespace') == 'connections':

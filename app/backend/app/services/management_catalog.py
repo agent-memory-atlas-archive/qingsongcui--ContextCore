@@ -22,7 +22,7 @@ def _owned_scope(manager, host_id, alias):
             [*paths, len(prefix), prefix, len(prompt_prefix), prompt_prefix, host_id])
 
 
-def _assigned(manager, host_id, kind, alias='e'):
+def _assigned(manager, host_id, kind, alias='e', resource_kind=None):
     if kind == 'binding':
         return f"json_extract({alias}.data,'$.host_id')=?", [host_id]
     if kind == 'model':
@@ -30,14 +30,18 @@ def _assigned(manager, host_id, kind, alias='e'):
         return f"EXISTS (SELECT 1 FROM management_entities p WHERE p.kind='provider' AND p.id=json_extract({alias}.data,'$.provider_id') AND ({expression}))", params
     # An explicit [] means deliberately unassigned; only legacy providers infer
     # membership from old model bindings. Native owned entries stay discoverable.
+    from app.services.host_config_roots import shared_membership
+
+    targets = shared_membership(manager, host_id, kind, resource_kind)
+    placeholders = ",".join("?" for _ in targets)
     expression = (f"CASE WHEN json_type({alias}.data,'$.agent_ids')='array' THEN "
-                  f"EXISTS(SELECT 1 FROM json_each({alias}.data,'$.agent_ids') WHERE value=?) ELSE "
-                  f"EXISTS(SELECT 1 FROM json_each({alias}.data,'$.host_ids') WHERE value=?)")
-    params = [host_id, host_id]
+                  f"EXISTS(SELECT 1 FROM json_each({alias}.data,'$.agent_ids') WHERE value IN ({placeholders})) ELSE "
+                  f"EXISTS(SELECT 1 FROM json_each({alias}.data,'$.host_ids') WHERE value IN ({placeholders}))")
+    params = [*targets, *targets]
     if kind == 'provider':
         expression += (f" OR EXISTS(SELECT 1 FROM management_entities b WHERE b.kind='binding' AND "
-                       f"json_extract(b.data,'$.provider_id')={alias}.id AND json_extract(b.data,'$.host_id')=?)")
-        params.append(host_id)
+                       f"json_extract(b.data,'$.provider_id')={alias}.id AND json_extract(b.data,'$.host_id') IN ({placeholders}))")
+        params.extend(targets)
     expression += ' END'
     installed, installed_params = _owned_scope(manager, host_id, alias)
     return '(' + expression + ') OR (' + installed + ')', params + installed_params
@@ -83,7 +87,7 @@ def catalog_page(manager, kind, *, agent_id=None, resource_kind=None, provider_i
         where.append("(json_extract(e.data,'$.provider_id')=? OR coalesce(json_extract(e.data,'$.provider_id'),'')='')" if include_unbound else "json_extract(e.data,'$.provider_id')=?")
         params.append(provider_id)
     if agent_id and scope != 'all':
-        expression, values = _assigned(manager, agent_id, kind)
+        expression, values = _assigned(manager, agent_id, kind, resource_kind=resource_kind)
         where.append(('NOT ' if scope == 'available' else '') + '(' + expression + ')')
         params += values
     if query.strip():

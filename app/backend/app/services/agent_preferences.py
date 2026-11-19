@@ -2,9 +2,16 @@
 import json
 
 from app.integrations.config_transactions import ConfigurationError
+from app.services.host_registry import HOST_DEFINITIONS
 from app.services.selection_receipts import EVENT_FILTER, HEADER_SQL, selected_state
 
 DEFAULT_HOSTS = ["claude-code", "codex", "opencode"]
+GROUP_IDS = {"codex-desktop": "codex", "antigravity-cli": "antigravity"}
+
+
+def _agents(ids):
+    return list(dict.fromkeys(group for item in ids
+                              if (group := GROUP_IDS.get(item, item)) in HOST_DEFINITIONS))
 
 
 def ensure_schema(conn):
@@ -24,9 +31,11 @@ def _write(conn, key, values):
 
 def _state(conn):
     from app.services.management_service import HOSTS
-    return {"host_names": {host: entry["name"] for host, entry in HOSTS.items()},
-            "favorite_hosts": _items(conn, "hosts", DEFAULT_HOSTS),
-            "recent_hosts": _items(conn, "recent-hosts")}
+    names = {host: HOSTS[host]["name"] for host in HOST_DEFINITIONS}
+    names.update(codex="Codex", antigravity="Antigravity")
+    return {"host_names": names,
+            "favorite_hosts": _agents(_items(conn, "hosts", DEFAULT_HOSTS)),
+            "recent_hosts": _agents(_items(conn, "recent-hosts"))}
 
 
 def read(manager):
@@ -41,12 +50,16 @@ def update(manager, host, action, provider=None, neighbor=None):
     with manager.connect() as conn:
         conn.execute("BEGIN IMMEDIATE")
         if action == "visit":
-            recent = _items(conn, "recent-hosts")
-            _write(conn, "recent-hosts", [host, *(x for x in recent if x != host)][:8])
+            recent = _agents([host, *_items(conn, "recent-hosts")])
+            _write(conn, "recent-hosts", recent[:8])
         elif action in ("pin", "unpin"):
             key = "hosts" if provider is None else "providers:" + host
             values = _items(conn, key, DEFAULT_HOSTS if provider is None else ())
-            target = host if provider is None else provider
+            target = GROUP_IDS.get(host, host) if provider is None else provider
+            if provider is None:
+                values = _agents(values)
+                if target not in HOST_DEFINITIONS:
+                    return _state(conn)
             if provider is not None and (not isinstance(provider, str) or not conn.execute(
                 "SELECT 1 FROM management_entities WHERE kind='provider' AND id=?", (provider,)
             ).fetchone()):

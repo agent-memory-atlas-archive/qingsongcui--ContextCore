@@ -1,5 +1,8 @@
 // Full English UI copy table keyed by source Chinese text.
 export const en = {
+  "配置入口": "Configuration target",
+  "Codex 命令行和桌面端共用配置。各入口的接入与验证状态可分别查看。": "Codex CLI and Desktop share configuration. Check integration and verification status for each entry separately.",
+  "Antigravity 桌面端和命令行共用此处的配置。": "Antigravity Desktop and CLI share these settings.",
   "当前没有需要更新的估算。": "All matching estimates are up to date.",
   "请先移除 {variable}，重新启动续境并恢复默认目录 {path} 的原配置，然后再切换目录。": "Unset {variable}, restart Senrelay and restore the configuration in the default directory {path} before switching directories.",
   "重算涵盖此价格生效期间的全部匹配尝试。": "Recalculation covers all matching attempts during the effective period.",

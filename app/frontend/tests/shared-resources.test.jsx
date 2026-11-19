@@ -19,8 +19,8 @@ const plan = (host, path = '/' + host) => ({
 });
 async function mountMatrix() {
   await act(async () => root.render(<SharedResourceMatrix hostId="codex" allHosts={hosts} revision={0} />));
-  await click(document.querySelector('input[aria-label^="Tool · codex"]'));
-  await click(document.querySelector('input[aria-label^="Tool · claude-code"]'));
+  await click(document.querySelector('input[aria-label^="Tool · Codex"]'));
+  await click(document.querySelector('input[aria-label^="Tool · Claude Code"]'));
 }
 beforeEach(() => {
   document.body.innerHTML = '<div id="root"></div>';

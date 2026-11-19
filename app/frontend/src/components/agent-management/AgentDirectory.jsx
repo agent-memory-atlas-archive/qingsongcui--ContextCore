@@ -6,8 +6,7 @@ import { Button, EmptyState, Field } from '../ui.jsx';
 function discoveryLabel(host) {
   const discovery = host.discovery;
   if (!discovery) return t('本机状态待检查');
-  const surfaceId = host.id === 'cursor' ? 'ide' : ['codex-desktop', 'antigravity'].includes(host.id) ? 'desktop' : 'cli';
-  if (discovery.surfaces?.some(surface => surface.id === surfaceId && surface.installation === 'detected')) return t('已检测到安装');
+  if (discovery.surfaces?.some(surface => surface.installation === 'detected')) return t('已检测到安装');
   if (discovery.discovered || discovery.evidence?.some(entry => ['present', 'executable_present', 'executable_link_present'].includes(entry.status))) return t('检测到本机记录');
   return t('未检测到本机记录');
 }

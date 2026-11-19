@@ -8,6 +8,7 @@ import { AssetTools } from '../AssetTools.jsx';
 import { StatusBadge } from '../ManagementUI.jsx';
 import { ResourcePagination } from './ResourcePagination.jsx';
 import { configuredLabel } from './ConfigurationState.jsx';
+import { agentGroup, agentGroupName, configurationChoices, configurationTarget } from '../../lib/agentGroups.js';
 import '../../styles/shared-resources.css';
 
 export { ConfigurationBackup } from './ConfigurationBackup.jsx';
@@ -35,7 +36,12 @@ export function SharedResourceMatrix({ hostId, allHosts, revision, onChanged }) 
   const mounted = useRef(false);
   const lock = useRef(false);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-  const sorted = allHosts.slice().sort((a, b) => Number(b.id === hostId) - Number(a.id === hostId));
+  const currentTarget = configurationTarget(allHosts, hostId, kind);
+  const targets = configurationChoices(allHosts, kind);
+  const sorted = targets
+    .map(host => targets.filter(item => agentGroup(item.id) === agentGroup(host.id)).length === 1
+      ? { ...host, name: agentGroupName(host) } : host)
+    .sort((a, b) => Number(b.id === currentTarget) - Number(a.id === currentTarget));
   const start = Math.max(0, sorted.findIndex(host => host.id === firstHost));
   const visible = sorted.slice(start, start + 3);
   const hostIds = visible.map(host => host.id).join(',');
@@ -95,7 +101,7 @@ export function SharedResourceMatrix({ hostId, allHosts, revision, onChanged }) 
   }
 
   function close() { if (!busy) { setPlans([]); setError(null); if (submitted) setSelection([]); } }
-  const names = Object.fromEntries(allHosts.map(host => [host.id, host.name]));
+  const names = Object.fromEntries([...allHosts, ...sorted].map(host => [host.id, host.name]));
   return <section className="management-panel resource-matrix">
     <h2>{t('共享资源')}</h2>
     <div className="toolbar-actions">{[['mcp', 'MCP'], ['skill', 'Skills'], ['prompt', t('使用规则')]].map(([id, label]) =>

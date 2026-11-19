@@ -287,6 +287,18 @@ class ManagementService:
                 item["discovery"] = {"mode": "metadata", "execution_performed": False, "history_read": False, "credentials_read": False, "health": "not_probed", "authorization": "required", "evidence": evidence}
                 item["observations"] = []
                 item["context_status"] = "unsupported"
+        codex = next(item for item in result if item["id"] == "codex")
+        if codex["shared_configuration"]:
+            # Existing Desktop activations must keep their original owner and
+            # restore point when opened through the unified Codex workspace.
+            with self.connect() as conn:
+                active_owner = conn.execute(
+                    "SELECT owner FROM management_owned WHERE path=? AND item_key=?",
+                    (codex["paths"]["mcp_path"], self.transactions._item_key({"kind": "toml_selection", "pointer": ["model"]})),
+                ).fetchone()
+            codex["shared_provider_target"] = (
+                "codex-desktop" if active_owner and active_owner["owner"] == "activation:codex-desktop" else "codex"
+            )
         return result
 
     def _row(self, row) -> dict:
@@ -329,8 +341,11 @@ class ManagementService:
             if kind == 'provider':
                 with self.connect() as conn:
                     agents += [row[0] for row in conn.execute("SELECT DISTINCT json_extract(data,'$.host_id') FROM management_entities WHERE kind='binding' AND json_extract(data,'$.provider_id')=?", (entity_id,))]
-        agents = list(dict.fromkeys(agent for agent in agents if agent in HOSTS and agent != host_id))
-        if selected:
+        from app.services.host_config_roots import shared_membership
+
+        removed = shared_membership(self, host_id, kind, old.get("kind")) if not selected else ()
+        agents = list(dict.fromkeys(agent for agent in agents if agent in HOSTS and agent not in removed))
+        if selected and host_id not in agents:
             agents.append(host_id)
         patch = {'agent_ids': agents}
         if kind == 'bundle' and selected:

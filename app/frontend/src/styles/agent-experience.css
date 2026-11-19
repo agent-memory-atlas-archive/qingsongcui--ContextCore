@@ -259,3 +259,7 @@
 .agent-config-root { display: grid; gap: .25rem; margin: .5rem 0; color: var(--secondary); overflow-wrap: anywhere; }
 .agent-config-root strong { color: var(--ink); }
 .agent-config-root p { margin: 0; }
+
+.agent-surface { display: flex; flex-wrap: wrap; align-items: end; gap: .5rem 1rem; margin: .5rem 0 1rem; }
+.agent-surface .field { flex: 0 1 16rem; }
+.agent-surface p { align-self: center; margin: 0; color: var(--secondary); font-size: .875rem; }

@@ -28,6 +28,7 @@ import { ModelCapacityField, capacityIsValid } from '../components/agent-managem
 import { ResourcePagination } from '../components/agent-management/ResourcePagination.jsx';
 import { SharedLibrary, CatalogChoice, catalogPath } from '../components/agent-management/CatalogControls.jsx';
 import { ConsolePage } from './ConsolePage.jsx';
+import { agentGroup, agentGroupName, configurationChoices, configurationTarget, configurationVariants, nativeTargetName, primaryAgents } from '../lib/agentGroups.js';
 import '../styles/agent-experience.css';
 
 const PRIMARY = [['providers', '模型与账号'], ['mcp', '工具'], ['skill', '技能'], ['prompt', '使用规则']];
@@ -72,7 +73,7 @@ function normalizeSyncPreview(res) {
 const aliases = { models: 'providers', tools: 'mcp', skills: 'skill', instructions: 'prompt' };
 const tabTitle = tab => t([...PRIMARY, ...SECONDARY].find(([id]) => id === tab)?.[1] || '共享资料库');
 const pathFor = tab => `/api/manage/${ASSET_KINDS.has(tab) ? 'assets' : tab}`;
-export const agentName = host => host?.id === 'omp' ? 'Oh My Pi (OMP)' : host?.label || host?.name || host?.id || '';
+const agentName = nativeTargetName;
 const sourceTypeLabel = type => type === 'cc-switch' || type === 'cc-switch-migration' ? t('本地配置') : type;
 const newEntity = (tab, hostId) => tab === 'providers' ? { name: '', base_url: '', ...apiDefaults(hostId === 'claude-code' ? 'anthropic' : 'openai', hostId), enabled: true, model_map: {} } : tab === 'accounts' ? { name: '', kind: 'api_key', provider_id: '' } : tab === 'mcp' ? { name: '', kind: 'mcp', config: { url: '', transport: 'http' }, source: { type: 'manual' } } : tab === 'skill' ? { name: '', kind: 'skill', install_mode: 'copy', files: { 'SKILL.md': '' }, source: { type: 'manual' } } : tab === 'prompt' ? { name: '', kind: 'prompt', content: '', source: { type: 'manual' } } : { name: '', project_id: '', provider_id: '', asset_ids: [], host_ids: [hostId] };
 const MODEL_GUIDES = {
@@ -87,10 +88,10 @@ export function AgentManagementPage({ agentId = '', section = '', onAgentChange,
   const preferences = useResource('/api/manage/agent-preferences', revision);
   const favorites = preferences.data?.favorite_hosts || DEFAULT_SHORTCUTS;
   const recent = preferences.data?.recent_hosts || [];
-  const effectiveAgentId = agentId;
-  const selected = hostList.find(item => item.id === effectiveAgentId);
   const requestedTab = aliases[section] || section || 'providers';
   const tab = [...PRIMARY, ...SECONDARY, ['library']].some(([id]) => id === requestedTab) ? requestedTab : 'providers';
+  const effectiveAgentId = configurationTarget(hostList, agentId, tab);
+  const selected = hostList.find(item => item.id === effectiveAgentId);
   const rootScope = selected?.config_root;
   const scope = `${effectiveAgentId}:${tab}` + (rootScope ? JSON.stringify([rootScope.status, rootScope.path]) : '');
   // Updated during render, so even a retained old event handler cannot apply to
@@ -105,12 +106,13 @@ export function AgentManagementPage({ agentId = '', section = '', onAgentChange,
   const recordVisit = useRef('');
   const reloadPrefs = preferences.reload;
   const choose = (id, category = 'providers') => {
-    if (id && id !== effectiveAgentId && recordVisit.current !== id) {
-      recordVisit.current = id;
-      Promise.resolve(mutate('/api/manage/agent-preferences', 'POST', { host_id: id, action: 'visit' }))
+    const group = agentGroup(id);
+    if (id && group !== agentGroup(effectiveAgentId) && recordVisit.current !== group) {
+      recordVisit.current = group;
+      Promise.resolve(mutate('/api/manage/agent-preferences', 'POST', { host_id: group, action: 'visit' }))
         .then(reloadPrefs).catch(setShortcutError);
     }
-    onAgentChange?.(id, category);
+    onAgentChange?.(configurationTarget(hostList, id, category), category);
   };
   async function pinHost(hostId, pinned) {
     if (pinLock.current) return;
@@ -129,7 +131,7 @@ export function AgentManagementPage({ agentId = '', section = '', onAgentChange,
   }
   return <div className="agent-experience">
     <ErrorNotice error={shortcutError || preferences.error} />
-    {!effectiveAgentId ? <><PageHeader title={t('Agent 管理')} description={t('选择一个助手，管理它使用的模型、账号和资源。')} actions={<Button icon={RefreshCw} onClick={hosts.reload}>{t('刷新')}</Button>} /><ResourceState resource={hosts}><AgentDirectory hosts={hostList} favorites={favorites} recent={recent} nameOf={agentName} onChoose={choose} onPin={pinHost} busy={pinBusy} /></ResourceState></> : <ResourceState resource={hosts}>{selected ? <AgentWorkspace key={scope} host={selected} favorites={favorites} recent={recent} allHosts={list(hosts.data)} tab={tab} revision={revision} onChanged={onChanged} projects={projects} navigate={navigate} choose={choose} scope={scope} scopeRef={scopeRef} drafts={drafts} /> : !hosts.loading && !hosts.error ? <EmptyState title={t('找不到这个助手')} body={t('地址中的助手不在当前列表中，请重新选择。')} action={<Button onClick={() => choose('', '')}>{t('返回助手列表')}</Button>} /> : null}</ResourceState>}
+    {!effectiveAgentId ? <><PageHeader title={t('Agent 管理')} description={t('选择一个助手，管理它使用的模型、账号和资源。')} actions={<Button icon={RefreshCw} onClick={hosts.reload}>{t('刷新')}</Button>} /><ResourceState resource={hosts}><AgentDirectory hosts={primaryAgents(hostList)} favorites={favorites.map(agentGroup)} recent={recent.map(agentGroup)} nameOf={agentGroupName} onChoose={choose} onPin={pinHost} busy={pinBusy} /></ResourceState></> : <ResourceState resource={hosts}>{selected ? <AgentWorkspace key={scope} host={selected} favorites={favorites.map(agentGroup)} recent={recent.map(agentGroup)} allHosts={list(hosts.data)} tab={tab} revision={revision} onChanged={onChanged} projects={projects} navigate={navigate} choose={choose} scope={scope} scopeRef={scopeRef} drafts={drafts} /> : !hosts.loading && !hosts.error ? <EmptyState title={t('找不到这个助手')} body={t('地址中的助手不在当前列表中，请重新选择。')} action={<Button onClick={() => choose('', '')}>{t('返回助手列表')}</Button>} /> : null}</ResourceState>}
   </div>;
 }
 
@@ -140,7 +142,13 @@ export function AgentWorkspace({ host, favorites = DEFAULT_SHORTCUTS, recent = [
   const rootBlocked = configRoot?.status === 'blocked';
   const installerRoot = host.config_root;
   const installerTarget = connId === 'codex' ? { surface: hostId === 'codex-desktop' ? 'desktop' : 'cli' } : {};
-  const name = agentName(host);
+  const groupId = agentGroup(hostId);
+  const allChoices = allHosts.length ? allHosts : [host];
+  const variants = configurationVariants(allChoices, groupId, tab);
+  const sharedAntigravity = groupId === 'antigravity' && ['mcp', 'skill'].includes(tab)
+    && allChoices.some(item => item.id === 'antigravity-cli' && configurationTarget(allChoices, item.id, tab) === groupId);
+  const sharedCodex = groupId === 'codex' && host.shared_configuration && variants.length === 1;
+  const name = sharedCodex || sharedAntigravity ? agentGroupName(host) : agentName(host);
   const [localRevision, setLocalRevision] = useState(0);
   const tick = `${revision}:${localRevision}`;
   const [showShared, setShowShared] = useState(false);
@@ -809,18 +817,26 @@ export function AgentWorkspace({ host, favorites = DEFAULT_SHORTCUTS, recent = [
   const supported = tab === 'providers' ? host.capabilities?.providers === true : tab === 'mcp' ? host.capabilities?.mcp === true : tab === 'skill' ? host.capabilities?.skills === true : tab === 'prompt' ? host.capabilities?.prompts === true : true;
   const category = tabTitle(tab);
   const hasDialog = editor || secretTarget || plan || importing || modelDraft || bindingDraft || accountAction || remove || activation || setupOpen || connectionEdit || syncTarget;
-  const allChoices = allHosts?.length ? allHosts : [host];
-  const shortcutIds = [...new Set([...favorites.slice(0, 5), ...recent.slice(0, 2), hostId])];
-  const switcherHosts = shortcutIds.map(id => allChoices.find(item => item.id === id)).filter(Boolean);
+  const groupChoices = primaryAgents(allChoices);
+  const shortcutIds = [...new Set([...favorites.slice(0, 5), ...recent.slice(0, 2), groupId])];
+  const switcherHosts = shortcutIds.map(id => groupChoices.find(item => item.id === id)).filter(Boolean);
+  const syncChoices = configurationChoices(allChoices, tab);
   const nativeKind = { providers: 'providers', mcp: 'mcp', skill: 'skills', prompt: 'rules' }[tab];
   const canReadNative = Object.entries(host.capabilities || {}).some(([key, available]) => ['providers', 'mcp', 'skills', 'prompts'].includes(key) && available);
   return <>
     <div className="cc-top-switcher-bar toolbar-actions" role="navigation" aria-label={t('宿主切换栏')}>
       <Button icon={ArrowLeft} disabled={busy} onClick={() => changeScope('', '')}>{t('所有助手')}</Button>
-      {switcherHosts.map(item => <Button key={item.id} disabled={busy} variant={item.id === hostId ? 'primary' : 'secondary'} aria-current={item.id === hostId ? 'true' : undefined} onClick={() => item.id !== hostId && changeScope(item.id, tab)}>{agentName(item)}</Button>)}
+      {switcherHosts.map(item => <Button key={item.id} disabled={busy} variant={item.id === groupId ? 'primary' : 'secondary'} aria-current={item.id === groupId ? 'true' : undefined} onClick={() => item.id !== groupId && changeScope(item.id, tab)}>{agentGroupName(item)}</Button>)}
     </div>
-    <PageHeader title={name} actions={<>{canReadNative ? <Button disabled={busy || rootBlocked} onClick={() => setNativeOpen(true)}>{t('读取原生配置')}</Button> : null}
+    <PageHeader title={agentGroupName(host)} actions={<>{canReadNative ? <Button disabled={busy || rootBlocked} onClick={() => setNativeOpen(true)}>{t('读取原生配置')}</Button> : null}
       {tab === 'providers' ? <Button icon={Plus} variant="primary" disabled={busy} onClick={openAddProvider}>{t('添加服务商')}</Button> : null}</>} />
+    {variants.length > 1 || (groupId === 'codex' && host.shared_configuration) || sharedAntigravity ? <div className="agent-surface">
+      {variants.length > 1 ? <Field label={tab === 'connections' ? t('目标入口') : t('配置入口')}><select value={hostId} disabled={busy} onChange={event => changeScope(event.target.value, tab)}>
+        {variants.map(item => <option key={item.id} value={item.id}>{agentName(item)}</option>)}
+      </select></Field> : null}
+      {groupId === 'codex' && host.shared_configuration ? <p>{t('Codex 命令行和桌面端共用配置。各入口的接入与验证状态可分别查看。')}</p> : null}
+      {sharedAntigravity ? <p>{t('Antigravity 桌面端和命令行共用此处的配置。')}</p> : null}
+    </div> : null}
     {configRoot ? <section className="agent-config-root" aria-label={t('宿主配置目录')}>
       <strong>{rootBlocked ? t('配置目录需要核对') : t('自定义配置目录')}</strong>
       <code>{configRoot.variable} · {configRoot.path}</code>
@@ -939,7 +955,7 @@ export function AgentWorkspace({ host, favorites = DEFAULT_SHORTCUTS, recent = [
                       {tab === 'providers' && host.capabilities?.native_activation !== true ? <Button icon={FileDiff} disabled={rootBlocked || !supported || busy || item.enabled === false || mcpNeedsReview(item)} onClick={() => makePlan(item)}>{t('预览应用到 {agent}', { agent: name })}</Button> : null}
                       {tab === 'skill' ? <Button disabled={busy} onClick={() => setImporting({ target: item })}>{t('更新技能来源')}</Button> : null}
                       {ASSET_KINDS.has(tab) || (tab === 'providers' && isAppliedResource && configuration.data?.selection?.provider_id !== item.id) ? <Button disabled={rootBlocked || !supported || busy} onClick={() => makePlan(item, 'uninstall')}>{t('预览从 {agent} 移除', { agent: name })}</Button> : null}
-                      {tab === 'providers' || ASSET_KINDS.has(tab) ? <Button disabled={busy} onClick={() => { setSyncTarget({ kind: tab === 'providers' ? 'provider' : 'asset', item, hostIds: rootBlocked ? [] : [hostId] }); setError(null); }}>{t('同步到多宿主')}</Button> : null}
+                      {tab === 'providers' || ASSET_KINDS.has(tab) ? <Button disabled={busy} onClick={() => { setSyncTarget({ kind: tab === 'providers' ? 'provider' : 'asset', item, hostIds: rootBlocked || !syncChoices.some(choice => choice.id === hostId) ? [] : [hostId] }); setError(null); }}>{t('同步到多宿主')}</Button> : null}
                       {tab === 'providers' && item.pinned ? <><Button disabled={busy || isSelectedProvider || !rows[rowIndex - 1]?.pinned || rows[rowIndex - 1]?.id === configuration.data?.selection?.provider_id} onClick={() => updateProviderShortcut(item, 'before', rows[rowIndex - 1])}>{t('上移')}</Button><Button disabled={busy || isSelectedProvider || !rows[rowIndex + 1]?.pinned || rows[rowIndex + 1]?.id === configuration.data?.selection?.provider_id} onClick={() => updateProviderShortcut(item, 'after', rows[rowIndex + 1])}>{t('下移')}</Button></> : null}
                       <Button disabled={busy} onClick={() => selectShared(item, false)}>{t('从助手清单移出')}</Button>
                       {tab === 'accounts' ? [['cancel', '取消授权流程'], ['refresh', '刷新授权'], ['logout', '退出授权'], ...(item.kind === 'oauth' ? [['revoke', '撤销官方授权']] : [])].map(([type, label]) => <Button key={type} onClick={() => setAccountAction({ type, item })}>{t(label)}</Button>) : null}
@@ -989,7 +1005,7 @@ export function AgentWorkspace({ host, favorites = DEFAULT_SHORTCUTS, recent = [
     {syncTarget && !syncReview ? <Modal title={t('同步到多宿主')} busy={busy} onClose={() => { setSyncTarget(null); setSyncConflictQueue([]); setError(null); }}><form className="management-form agent-form" onSubmit={submitSyncToHosts}>
       <p>{t('先为每个宿主生成差异预览；逐项确认后才会写入配置。')}</p>
       {syncTarget.kind === 'provider' ? <Field label={t('模型')}><input required value={syncTarget.modelId || ''} onChange={event => setSyncTarget(current => ({ ...current, modelId: event.target.value, preview: null, partialError: null, conflictNote: '', applied: {} }))} /></Field> : null}
-      <div className="agent-resource-checklist">{allChoices.map(item => <label key={item.id} className="checkbox-label"><input type="checkbox" disabled={item.config_root?.status === 'blocked'} checked={syncTarget.hostIds.includes(item.id)} onChange={event => setSyncTarget(current => ({ ...current, preview: null, partialError: null, conflictNote: '', applied: {}, hostIds: event.target.checked ? Array.from(new Set([...current.hostIds, item.id])) : current.hostIds.filter(id => id !== item.id) }))} />{agentName(item)}</label>)}</div>
+      <div className="agent-resource-checklist">{syncChoices.map(item => <label key={item.id} className="checkbox-label"><input type="checkbox" disabled={item.config_root?.status === 'blocked'} checked={syncTarget.hostIds.includes(item.id)} onChange={event => setSyncTarget(current => ({ ...current, preview: null, partialError: null, conflictNote: '', applied: {}, hostIds: event.target.checked ? Array.from(new Set([...current.hostIds, item.id])) : current.hostIds.filter(id => id !== item.id) }))} />{syncChoices.filter(choice => agentGroup(choice.id) === agentGroup(item.id)).length > 1 ? agentName(item) : agentGroupName(item)}</label>)}</div>
       {syncTarget.conflictNote ? <p className="operation-notice" role="status">{syncTarget.conflictNote}</p> : null}
       {syncTarget.preview ? <div>{Object.entries(syncTarget.preview.results || {}).map(([id, entry]) => <section key={id}><h3>{syncHostLabel(id)}</h3>{entry.plan ? <><StatusBadge value={syncTarget.applied?.[id] || entry.plan.status} /><Button disabled={busy || Boolean(syncTarget.applied?.[id])} onClick={() => { setError(null); setSyncReview({ hostId: id, plan: entry.plan, result: null }); }}>{t('查看差异并确认')}</Button></> : <><StatusBadge value="failed" /><p role="alert">{formatBackendWarning(entry.error, 422) || t('生成预览失败，请检查该宿主支持范围。')}</p></>}</section>)}</div> : null}
       <ErrorNotice error={error} /><footer className="modal-actions"><Button onClick={() => { setSyncTarget(null); setSyncConflictQueue([]); setError(null); }}>{t('关闭')}</Button><Button type="submit" variant="primary" busy={busy} disabled={!syncTarget.hostIds.length}>{t('生成各宿主预览')}</Button></footer>
