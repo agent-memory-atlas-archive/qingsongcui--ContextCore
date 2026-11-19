@@ -26,13 +26,20 @@ def test_readiness_keeps_the_first_accepted_probe_during_cold_start(tmp_path, re
     responder = """
 import sys, time
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from socketserver import TCPServer
+class LoopbackServer(HTTPServer):
+    def server_bind(self):
+        # HTTPServer normally resolves the hostname here. The cold-start
+        # fixture should depend only on loopback, even when DNS is unavailable.
+        TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         time.sleep(1.4)
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b'ready')
-with HTTPServer(('127.0.0.1', int(sys.argv[1])), Handler) as server:
+with LoopbackServer(('127.0.0.1', int(sys.argv[1])), Handler) as server:
     server.handle_request()
 """
     cmd = [sys.executable, "-I", "-c", responder, str(port)]
