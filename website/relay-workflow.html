@@ -320,6 +320,15 @@
 你：1，请先运行 pytest -k webhook 看最新报错再提出修改计划</code></pre>
     </section>
 
+    <section class="guide-section" id="quota-handoff-check">
+      <h2>Claude Code 额度用完，切到 Codex 前先核对什么？</h2>
+      <ol>
+        <li><strong>先核对项目目录和分支。</strong>在新窗口确认当前工作目录；如果同一仓库有多个工作树，用 <code>git status --short --branch</code> 核对分支和现有改动，再从候选列表按目录、时间和任务选会话。</li>
+        <li><strong>先只回编号，做一次只读交接。</strong>让接收方汇报已经做了什么、哪一步卡住、哪些结论还没验证。若汇报与实际文件或测试状态不符，先核对来源会话和原文是否读完。</li>
+        <li><strong>给出一个明确的续做任务。</strong>例如「只运行刚才失败的测试，给我最新报错」。接收方以当前工作树和新测试结果为准，区分旧记录和本次执行结果。</li>
+      </ol>
+    </section>
+
     <section class="guide-section" id="layering">
       <span class="section-kicker">03 · COMPLEMENTARY LAYERS</span>
       <h2>不重复造轮子：<code>AGENTS.md</code>、<code>MCP</code> 与会话接力怎么配合</h2>
