@@ -945,7 +945,6 @@ async function buildBilingualDocPagePair({
   zhHref,
   enHref,
   mdHref,
-  zhMdHref,
   lastmod,
   published,
   buildSchema,
@@ -953,6 +952,7 @@ async function buildBilingualDocPagePair({
 }) {
   const baseDocHtml = applyBrandTokens(await readFile(path.join(root, fileName), 'utf8'));
   const zhDesc = decodeHtml(baseDocHtml.match(/<meta name="description" content="([^"]+)">/)[1]);
+  const zhMdHref = site ? new URL(mdFileName, zhHref).href : './' + mdFileName;
 
   let zhDoc = removeElementByAttr(baseDocHtml, 'div', 'data-guide-section="en"')
     .replace(/\s*<hr class="lang-divider">\s*/g, '\n')
@@ -985,18 +985,16 @@ async function buildBilingualDocPagePair({
         canonicalHref: zhHref,
         zhHref,
         enHref,
-        mdHref: zhMdHref || mdHref,
+        mdHref: zhMdHref,
         altOgLocale: 'en_US',
         imageAlt: zhTitle,
       }),
     )
     .replace('</head>', `  <script type="application/ld+json">${escapeJson(zhSchema)}</script>\n</head>`);
   await writeFile(path.join(out, 'zh', fileName), zhDoc);
-  if (zhMdHref) {
-    await writeFile(path.join(out, 'zh', mdFileName), htmlMainToMarkdown({
-      docHtml: zhDoc, title: zhTitle, canonicalHref: zhHref, lastmod, lang: 'zh',
-    }));
-  }
+  await writeFile(path.join(out, 'zh', mdFileName), htmlMainToMarkdown({
+    docHtml: zhDoc, title: zhTitle, canonicalHref: zhHref, lastmod, lang: 'zh',
+  }));
 
   let enDoc = removeElementByAttr(baseDocHtml, 'div', 'data-guide-section="zh"')
     .replace(/\s*<hr class="lang-divider">\s*/g, '\n')
@@ -1145,10 +1143,7 @@ for (const fileName of ['claude-code-memory.html', 'mcp-json-vs-toml-config-guid
     zhHref: href('zh/'),
     enHref: href(''),
     mdHref: site ? new URL(mdFileName, site).href : './' + mdFileName,
-    ...(featureGuides.includes(fileName) ? {
-      zhMdHref: site ? new URL('zh/' + mdFileName, site).href : './' + mdFileName,
-      published: '2026-11-19',
-    } : {}),
+    ...(featureGuides.includes(fileName) ? { published: '2026-11-19' } : {}),
     lastmod: gitLastmod([fileName, 'scripts/build.mjs']),
     buildSchema: buildGuideSchema,
   });

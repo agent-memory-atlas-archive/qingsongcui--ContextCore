@@ -277,6 +277,12 @@
       </ol>
       <p><strong>包名说明：</strong>PyPI 上名为 <code>contextcore</code> 的包为无关第三方项目，请勿执行 <code>pip install contextcore</code>。需要从源码运行时，请克隆仓库后按下一节安装开发依赖。</p>
       <p>用户数据默认存放在 <code>~/Library/Application Support/ContextCore</code>。关闭窗口（<code>Cmd+W</code>）不会停止后台常驻服务；卸载应用也不会删除已保存的项目历史、记忆或钥匙串凭据，可通过 <code>contextcore backup</code> 随时导出整库在线备份。</p>
+      <h3 id="first-launch-checklist">首次打开后，怎么确认能用？</h3>
+      <ol>
+        <li><strong>先确认工作台能打开：</strong>若应用已打开但宿主里找不到 <code>contextcore</code>，先在同一台 Mac 的浏览器访问 <code>http://127.0.0.1:8420</code>，区分本机服务未启动和宿主尚未接入。</li>
+        <li><strong>只选一个宿主试接入：</strong>在「Agent 管理」中选你正在用的 Claude Code 或 Codex，核对 <code>contextcore</code> 是否指向本机的 <code>/mcp/</code>。如果宿主仍看不到工具，打开<a class="inline-link" href="./hosts.html">对应宿主的配置路径</a>核对，别先覆盖其他宿主的配置。</li>
+        <li><strong>用一条测试会话验收：</strong>在接收方输入 <code>/contextcore</code>，核对来源项目和时间。先只回复序号，让它汇报并待命，确认选对会话后再交代下一步。</li>
+      </ol>
       <h3>源码开发要求</h3>
       <ul>
         <li><strong>操作系统</strong>：macOS 14.0 及以上（Apple Silicon）</li>

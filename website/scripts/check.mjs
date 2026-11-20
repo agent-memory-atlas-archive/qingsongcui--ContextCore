@@ -403,6 +403,15 @@ assert.ok(!llmsFull.includes('💡') && !llmsFull.includes('📌'), 'no decorati
 assert.ok(!llmsFull.includes('6-point'), 'no stale 6-point handoff card reference in llms-full.txt');
 
 const production = enHtml.includes('content="index, follow"');
+for (const [name, doc] of [['guide', guide], ['compare', compare], ['hosts', hosts], ['relay-workflow', relay]]) {
+  const mirror = await readFile(path.join(root, 'zh', name + '.md'), 'utf8');
+  const zhOrigin = production ? 'https://senrelay.com/zh/' : './zh/';
+  assert.equal(mirror.split('\n')[0], '> 原文：' + zhOrigin + name + '.html');
+  assert.match(mirror, /^# .*[\u4e00-\u9fff]/m, `Chinese article heading in ${name}.md`);
+  if (production) {
+    assert.ok(doc.includes(`type="text/markdown" href="${zhOrigin}${name}.md" title="Markdown Mirror"`), `Chinese mirror linked from ${name}.html`);
+  }
+}
 const expectedClarityId = (process.env.CLARITY_ID || '').trim();
 const addedDocs = [];
 const featureGuides = ['agent-management.html', 'ai-coding-usage-tracker.html'];
